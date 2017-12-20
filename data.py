@@ -1,8 +1,10 @@
-from audio import AudioFile, get_audio_patch_with_params
-from audio import MELS, HOP_LENGTH, SAMPLE_RATE, RMS_SILENCE_THRESHOLD, SILENCE_HOP_THRESHOLD
 import numpy as np
 import multiprocessing
 import random
+import itertools
+
+from audio import AudioFile, get_audio_patch_with_params
+from audio import MELS, HOP_LENGTH, SAMPLE_RATE, RMS_SILENCE_THRESHOLD, SILENCE_HOP_THRESHOLD
 
 
 class DataClass:
@@ -60,9 +62,12 @@ class LineDelimFileDataset(Dataset):
         files = []
         for i in range(batch_size):
             coord_off = random.randint(0, len(self.line_coords)-1)
-            files.append(self.get_filename_for_coord(coord_off))
+            # files.append(self.get_filename_for_coord(coord_off))
+            patch = get_audio_patch_with_params(self.get_filename_for_coord(coord_off))
+            yield patch, self._data_class
+        return
         pool = multiprocessing.Pool()
-        return pool.imap(get_audio_patch_with_params, enumerate(files))
+        return pool.imap(get_audio_patch_with_params, files)
 
     def get_filename_for_coord(self, coord_off):
         offset, length = self.line_coords[coord_off]
@@ -93,7 +98,7 @@ class SimpleDualDS:
             raise RuntimeError('num must be even', num)
         v = self.voclds.read(int(num/2))
         i = self.instds.read(int(num/2))
-        return v, i
+        return itertools.chain(v, i)
 
 
 class DatasetCollection:

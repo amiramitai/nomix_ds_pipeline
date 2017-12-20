@@ -45,8 +45,7 @@ def format_secs(secs):
     return '{}:{}'.format(mins, secs)
 
 
-def get_audio_patch_with_params(args, location=None):
-    i, filename = args
+def get_audio_patch_with_params(filename, location=None):
     af = AudioFile(filename)
     dur = af.get_duration()
     # print('[+] {} getting audio patch'.format(i))
@@ -72,8 +71,7 @@ def get_audio_patch_with_params(args, location=None):
         #     print(fmt.str.format(i, filename, format_secs(loc), rms.mean(), sum(rms[0])))
 
 
-def get_image_with_audio(args):
-    i, (y, label) = args
+def get_image_with_audio(y, label):
     # print('[+] {} turning to mel..'.format(i))
     mel = librosa.feature.melspectrogram(y=y,
                                          sr=SAMPLE_RATE,
