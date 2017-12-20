@@ -13,11 +13,33 @@ from pydub import AudioSegment
 from utils import AsyncGenerator
 from vgg16 import Vgg16
 
+QUEUE_MAX_SIZE = 32
+class MyQueue:
+    def __init__(self, maxsize):
+        self.size = multiprocessing.Value('i', 0)
+        self.lock = multiprocessing.Lock()
+        self.queue = multiprocessing.Queue(maxsize=maxsize)
+
+    def put(self, *args, **kwargs):
+        ret = self.queue.put(*args, **kwargs)
+        with self.lock:
+            self.size.value += 1
+        return ret
+
+
+    def get(self, *args, **kwargs):
+        ret = self.queue.get(*args, **kwargs)
+        with self.lock:
+            self.size.value -= 1
+        return ret
+
+    def qsize(self):
+        return self.size.value
 
 class PipelineStage:
     def __init__(self):
         self._input_queue = None
-        self._output_queue = multiprocessing.Queue(maxsize=QUEUE_MAX_SIZE)
+        self._output_queue = MyQueue(maxsize=QUEUE_MAX_SIZE)
 
     def in_proc_init(self):
         pass
@@ -64,16 +86,33 @@ class DatasetStage(PipelineStage):
             # print(item)
             self.output_queue.put(item)
 
+PROGRESSBAR_STAGES = 10
+def print_summary(start, queues):
+    final_str = []
+    time_passed = str(time.time() - start)
+    for name, q in queues:
+        fract = q.qsize() / QUEUE_MAX_SIZE
+        stages = int(fract * PROGRESSBAR_STAGES)
+        amount_str = '[{}{}]'.format('#' * stages, ' ' * (PROGRESSBAR_STAGES - stages))
+        final_str.append('{}: {}'.format(name, amount_str))
+    final_str.append(time_passed)
+    print(' '.join(final_str))
+        
+
+
+
+
 def is_main_thread_alive():
         return any([a.is_alive() for a in threading.enumerate() if a.name == 'MainThread'])
 
-def keepalive_worker(keepalive):
+def keepalive_worker(keepalive, queues):
     # print('[+] in keepalive_worker')
     start = time.time()
     while is_main_thread_alive():
         keepalive.value = time.time()
         time.sleep(2.0)
-        print('[+] time:', time.time() - start)
+        # print('[+] time:', time.time() - start)
+        print_summary(start, queues)
     # print('[+] keepalive_worker done1')
 
 STAGE_GET_TIMEOUT = 5000
@@ -97,11 +136,10 @@ def pipeline_stage_worker(stage, keepalive):
             traceback.print_exc()
 
 
-QUEUE_MAX_SIZE = 64
 class Pipeline:
     def __init__(self):
         self._stages = []
-        self._input_queue = multiprocessing.Queue(maxsize=QUEUE_MAX_SIZE)
+        self._input_queue = MyQueue(maxsize=QUEUE_MAX_SIZE)
         self._keepalive = multiprocessing.Value('d', time.time())
         self._keepalive_thread = None
 
@@ -121,8 +159,9 @@ class Pipeline:
 
 
     def run(self):
+        queues = [(s.__class__.__name__, s.input_queue) for s in self._stages]
         self._keepalive_thread = threading.Thread(target=keepalive_worker,
-                                                  args=(self._keepalive,))
+                                                  args=(self._keepalive, queues))
         self._keepalive_thread.start()
         
         ps = []
@@ -258,7 +297,7 @@ class AudioEncoderPipeline(Pipeline):
         self.add_stage(AudioToImageStage())
         self.add_stage(ImageToEncoding())
         # self.add_stage(TrainFormatterStage())
-        self.add_stage(PrinterStage())
+        # self.add_stage(PrinterStage())
 
 
 # class TrainFormatterStage(PipelineStage):
@@ -281,6 +320,7 @@ if __name__ == '__main__':
     else:
         read_size = int(sys.argv[1])
         print('[+] Using given read_size:', read_size)
+
     amp = AudioEncoderPipeline()
     amp.run()
     ret = amp.read(read_size)
