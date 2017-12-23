@@ -49,6 +49,7 @@ class LineDelimFileDataset(Dataset):
         # print(len(self.line_coords))
         self.f.seek(0)
         self.coord_ptr = 0
+        self.lock = multiprocessing.Lock()
 
     def shuffle(self):
         print('[+] shuffling:', self.filename)
@@ -70,9 +71,11 @@ class LineDelimFileDataset(Dataset):
         return pool.imap(get_audio_patch_with_params, files)
 
     def get_filename_for_coord(self, coord_off):
-        offset, length = self.line_coords[coord_off]
-        self.f.seek(offset)
-        return self.f.read(length).strip()
+        with self.lock:
+            offset, length = self.line_coords[coord_off]
+            self.f.seek(offset)
+            ret = self.f.read(length).strip()
+        return ret
 
     def get_length(self):
         return len(self.line_coords)
