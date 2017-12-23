@@ -15,8 +15,8 @@ from pydub import AudioSegment
 from utils import AsyncGenerator
 from vgg16 import Vgg16
 
-KEEP_ALIVE_WORKER_SLEEP = 2.0
-EMPTY_QUEUE_SLEEP = 2.0
+KEEP_ALIVE_WORKER_SLEEP = 1.0
+EMPTY_QUEUE_SLEEP = 1.0
 QUEUE_MAX_SIZE = 64
 
 
