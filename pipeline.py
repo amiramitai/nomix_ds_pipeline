@@ -334,7 +334,7 @@ def pipeline_stage_worker(thread_sem, stage, keepalive):
                 # print('[+] pipeline_stage_worker({}): no input.. sleeping..'.format(stage.name))
                 time.sleep(EMPTY_QUEUE_SLEEP)
                 continue
-            print('[+] pipeline_stage_worker({}): working with {} threads'.format(stage.name, stage.get_thread_alloc()))
+            # print('[+] pipeline_stage_worker({}): working with {} threads'.format(stage.name, stage.get_thread_alloc()))
             for t in range(thread_alloc):
                 item = stage.input_queue.get(True, STAGE_GET_TIMEOUT)
                 # p = multiprocessing.Process(target=stage.write, args=(item,))
