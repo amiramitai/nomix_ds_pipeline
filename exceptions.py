@@ -1,0 +1,3 @@
+
+class BadAudioFile(Exception):
+    pass

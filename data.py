@@ -2,6 +2,7 @@ import numpy as np
 import multiprocessing
 import random
 import itertools
+import pickle
 
 from audio import AudioFile, get_audio_patch_with_params
 from audio import MELS, HOP_LENGTH, SAMPLE_RATE, RMS_SILENCE_THRESHOLD, SILENCE_HOP_THRESHOLD
@@ -65,10 +66,9 @@ class LineDelimFileDataset(Dataset):
             coord_off = random.randint(0, len(self.line_coords)-1)
             # files.append(self.get_filename_for_coord(coord_off))
             patch = get_audio_patch_with_params(self.get_filename_for_coord(coord_off))
-            yield patch, self._data_class
+            patch.cache(self._data_class)
+            yield patch.data, self._data_class
         return
-        pool = multiprocessing.Pool()
-        return pool.imap(get_audio_patch_with_params, files)
 
     def get_filename_for_coord(self, coord_off):
         with self.lock:

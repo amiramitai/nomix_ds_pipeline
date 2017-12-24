@@ -1,8 +1,15 @@
+
+import math
+import random
+import os
+import pickle
+import datetime
+
 import audioread
 import librosa
 import numpy as np
-import math
-import random
+
+from exceptions import BadAudioFile
 
 
 FFT = 2048
@@ -45,27 +52,47 @@ def format_secs(secs):
     return '{}:{}'.format(mins, secs)
 
 
-def get_audio_patch_with_params(filename, location=None):
+class AudioPatch:
+    def __init__(self, data, filename, loc):
+        self.filename = filename
+        self.loc = loc
+        self.data = data
+        self.min = str(int(datetime.datetime.now().minute / 3))
+
+    def cache(self, cls):
+        dir_path = os.path.join(os.environ['HOME'], 'cache', str(cls), self.min)
+        if not os.path.isdir(dir_path):
+            os.mkdir(dir_path)
+        file_name = '{}_{}'.format(os.path.basename(self.filename), str(self.loc))
+        open(os.path.join(dir_path, file_name), 'wb').write(pickle.dumps(self.data))
+
+
+
+def get_audio_patch_with_params(filename):
     af = AudioFile(filename)
     dur = af.get_duration()
     # print('[+] {} getting audio patch'.format(i))
-    loc = location
     CPRECISION = 0.01
     toread = math.ceil(((MELS * HOP_LENGTH) / SAMPLE_RATE) / CPRECISION) * CPRECISION
-    while True:
-        if location:
-            af.seek(location)
-        else:
-            loc = random.uniform(0, dur-toread)
-            af.seek(loc)        
+    for i in range(10):
+        loc = random.uniform(0, dur-toread)
+        af.seek(loc)        
         y = af.read(toread)
         if y.ndim == 2:
             y = y[0]
+
+
+        if len(y) < MELS * HOP_LENGTH:
+            print('[+] get_audio_patch_with_params: got too short for {}/y:{}/loc:{}/dur:{}'.format(filename, len(y), format_secs(loc), dur))
+            continue
         rms = librosa.feature.rmse(y=y) 
         # if rms.mean() > 0.05:
         #     return y
-        if sum(rms[0]) > 6.5:
-            return y
+        if sum(rms[0]) > 5.0:
+            # print(len(y), filename)
+            return AudioPatch(y, filename, loc)
+    
+    raise BadAudioFile()
         # else:
         #     fmtstr = '[+] {} patch is not loud enough:\n\t{}\n\t{}\n\t{}\n\t{}'
         #     print(fmt.str.format(i, filename, format_secs(loc), rms.mean(), sum(rms[0])))
@@ -73,6 +100,7 @@ def get_audio_patch_with_params(filename, location=None):
 
 def get_image_with_audio(y, label):
     # print('[+] {} turning to mel..'.format(i))
+    # print(len(y))
     mel = librosa.feature.melspectrogram(y=y,
                                          sr=SAMPLE_RATE,
                                          n_mels=MELS,

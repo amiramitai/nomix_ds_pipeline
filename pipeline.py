@@ -15,8 +15,8 @@ from pydub import AudioSegment
 from utils import AsyncGenerator
 from vgg16 import Vgg16
 
-KEEP_ALIVE_WORKER_SLEEP = 1.0
-EMPTY_QUEUE_SLEEP = 1.0
+KEEP_ALIVE_WORKER_SLEEP = 0.2
+EMPTY_QUEUE_SLEEP = 0.1
 QUEUE_MAX_SIZE = 64
 
 
@@ -34,6 +34,7 @@ def keyboard_int_guard(func):
 class MyQueue:
     def __init__(self, maxsize):
         self.size = multiprocessing.Value('i', 0)
+        self.counter = multiprocessing.Value('i', 0)
         self.lock = multiprocessing.Lock()
         self.queue = multiprocessing.Queue(maxsize=maxsize)
 
@@ -41,6 +42,7 @@ class MyQueue:
         ret = self.queue.put(*args, **kwargs)
         with self.lock:
             self.size.value += 1
+            self.counter.value += 1
         return ret
 
 
@@ -59,25 +61,26 @@ class MyInputQueue:
         self.lock = multiprocessing.Lock()
 
     def put(self, samples):
-        print('[+] MyInputQueue::put', samples)
-        with self.lock:            
-            self.samples_to_read.value += samples
+        # print('[+] MyInputQueue::put', samples)
+        # with self.lock:            
+        #     self.samples_to_read.value += samples
+        pass
 
 
     def get(self, *args, **kwargs):
         # print('[+] MyInputQueue::get')
-        while self.qsize() < 2:
-            print('[+] MyInputQueue::get sleep')
-            time.sleep(EMPTY_QUEUE_SLEEP)
-        with self.lock:
-            self.samples_to_read.value -= 2
+        # while self.qsize() < 2:
+        #     print('[+] MyInputQueue::get sleep')
+        #     time.sleep(EMPTY_QUEUE_SLEEP)
+        # with self.lock:
+        #     self.samples_to_read.value -= 2
         return 2
 
     def qsize(self):
-        ret = min(self.samples_to_read.value / 2, QUEUE_MAX_SIZE)
-        ret = int(ret)
+        # ret = min(self.samples_to_read.value / 2, QUEUE_MAX_SIZE)
+        # ret = int(ret)
         # print('[+] MyInputQueue::qsize', ret)
-        return ret
+        return QUEUE_MAX_SIZE
 
 class PipelineStage:
     def __init__(self):
@@ -134,7 +137,7 @@ class PipelineStage:
 
     @output_queue.setter
     def output_queue(self, _output):
-        self._output_queue = _output_queue
+        self._output_queue = _output
         return self._output_queue
 
     @property
@@ -174,15 +177,28 @@ class DatasetStage(PipelineStage):
             # print(item)
             self.output_queue.put(item)
 
-PROGRESSBAR_STAGES = 5
+PROGRESSBAR_STAGES = 10
 def print_summary(start, stages):
     final_str = []
     time_passed = int(time.time() - start)
     total_occup_threads = 0
     for s in stages:
-        # if not s.should_display:
-        #     final_str.append('[{:4d}]'.format(s.input_queue.qsize()))
-        #     continue
+        input_info = ('{:%dd}'%(PROGRESSBAR_STAGES)).format(s.input_queue.qsize())
+        fract = s.input_queue.qsize() / QUEUE_MAX_SIZE
+        level = int(fract * PROGRESSBAR_STAGES)
+        
+        white = '\033[5;30;47m'
+        nc = '\033[0m'
+        formatted = [white]
+        formatted.append(input_info[:level])
+        formatted.append(nc)
+        formatted.append(input_info[level:])
+        input_info = ''.join(formatted)
+        
+        input_pipe = '[{}]'.format(input_info)
+        if not s.should_display:
+            final_str.append(input_pipe)
+            continue
         occup_threads = s.get_occupied_threads()
         total_occup_threads += occup_threads
         alloc_threads = s.get_thread_alloc()
@@ -190,11 +206,21 @@ def print_summary(start, stages):
         # level = int(fract * PROGRESSBAR_STAGES)
         # amount_str = '[{}{}]'.format('#' * level, ' ' * (PROGRESSBAR_STAGES - level))
         # final_str.append('{}: {}[{}][{}]'.format(s.name, amount_str, alloc_threads, occup_threads))
-        final_str.append('[{:3d}]>>{}[{}|{}]>>'.format(s.input_queue.qsize(), s.name, alloc_threads, occup_threads))
-    final_str.append('[{:3d}]'.format(s.output_queue.qsize()))
-    final_str.append(' t: {} '.format(total_occup_threads))
+        green = '\033[1;32;40m'
+        yellow = '\033[1;33;40m'
+        nc = '\033[0m'
+        # state_color = green if occup_threads > 0 else nc
+        state_color = nc
+        if occup_threads > 0:
+            state_color = green
+        elif alloc_threads > 0:
+            state_color = yellow
+        pipe_rep = '{}{}[{}|{}]{}'.format(state_color, s.name, alloc_threads, occup_threads, nc)
+        final_str.append('{}>>{}>>'.format(input_pipe, pipe_rep))
+    final_str.append('[{}]'.format(s.output_queue.counter.value))
+    final_str.append(' t[{}/{}] '.format(total_occup_threads, multiprocessing.cpu_count() ))
     final_str.append(str(time_passed))
-    print(''.join(final_str))
+    print(''.join(final_str), end='\r')
 
 
 def is_main_thread_alive():
@@ -232,8 +258,11 @@ def prioritize_threads(stages):
         input_priority = s.input_queue.qsize() / QUEUE_MAX_SIZE
         output_priority = 1.0 - (s.output_queue.qsize() / QUEUE_MAX_SIZE)
         current_alloc = s.get_occupied_threads() + s.get_thread_alloc()
+        priority = input_priority * output_priority
+        # if priority == 0:
+        #     continue
         # print('[+] prioritize_threads: stage {} in {} out {}'.format(s.name, input_priority, output_priority))
-        priorities.append(input_priority * output_priority)
+        priorities.append(priority)
         stages_to_prior.append(s)
 
     if not stages_to_prior:
@@ -260,13 +289,8 @@ def prioritize_threads(stages):
             if t_to_alloc > s.get_max_parallel():
                 # print('[+] prioritize_threads: fixing t_to_alloc > s.get_max_parallel(): {}->{}'.format(t_to_alloc, s.get_max_parallel()))
                 t_to_alloc = max(s.get_max_parallel() - current_alloc, 0)
-            if t_to_alloc + current_alloc > avail_threads:
-                t_to_alloc = s.get_max_parallel() - current_alloc
-                if t_to_alloc < 0:
-                    # print('[+] prioritize_threads: BUG', t_to_alloc)
-                    t_to_alloc = 0
-
-            t_to_alloc = min(max(t_to_alloc, 0), avail_threads)
+            
+            t_to_alloc = min(t_to_alloc, avail_threads)
             # print('[+] prioritize_threads: stage {} gets {} threads'.format(s.name, t_to_alloc))
             s.add_thread_alloc(t_to_alloc)
             avail_threads -= t_to_alloc
@@ -326,7 +350,13 @@ def pipeline_stage_worker(thread_sem, stage, keepalive):
     spawned_procs = []
     while True:
         try:
-            [p for p in spawned_procs if p.is_alive()]
+            alive = []
+            for p in spawned_procs:
+                if p.is_alive():
+                    alive.append(p)
+                else:
+                    del p
+            spawned_procs = alive
             thread_alloc = stage.get_thread_alloc()
             # print(stage)
             # print('[+] pipeline_stage_worker({}): sizeof input: ({})'.format(stage.name, stage.input_queue.qsize()))
@@ -532,10 +562,10 @@ class AudioEncoderPipeline(Pipeline):
         super().__init__()
         self.add_stage(DatasetStage(SimpleDualDS()))
         # self.add_stage(AudioJoinStage())
-        self.add_stage(AudioToImageStage())
-        self.add_stage(ImageToEncoding())
+        # self.add_stage(AudioToImageStage())
+        # self.add_stage(ImageToEncoding())
         # self.add_stage(TrainFormatterStage())
-        self.add_stage(PrintSummary())
+        # self.add_stage(PrintSummary())
 
 
 # class TrainFormatterStage(PipelineStage):
