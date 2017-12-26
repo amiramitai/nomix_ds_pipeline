@@ -66,7 +66,7 @@ class LineDelimFileDataset(Dataset):
             coord_off = random.randint(0, len(self.line_coords)-1)
             # files.append(self.get_filename_for_coord(coord_off))
             patch = get_audio_patch_with_params(self.get_filename_for_coord(coord_off))
-            patch.cache(self._data_class)
+            # patch.cache(self._data_class)
             yield patch.data, self._data_class
         return
 

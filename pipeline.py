@@ -8,6 +8,8 @@ import traceback
 import time
 import sys
 import os
+import uuid
+import pickle
 
 from audio import get_image_with_audio, SAMPLE_RATE
 from data import DataClass, DataType, SimpleDualDS
@@ -32,21 +34,38 @@ def keyboard_int_guard(func):
 
 
 class MyQueue:
-    def __init__(self, maxsize):
+    def __init__(self, maxsize=None, last=False):
         self.size = multiprocessing.Value('i', 0)
         self.counter = multiprocessing.Value('i', 0)
         self.lock = multiprocessing.Lock()
-        self.queue = multiprocessing.Queue(maxsize=maxsize)
+        if maxsize:
+            self.queue = multiprocessing.Queue(maxsize=maxsize)
+        else:
+            self.queue = None
+        self.last = last
+        self._cache_folder = None
 
-    def put(self, *args, **kwargs):
-        ret = self.queue.put(*args, **kwargs)
+    def set_cache(self, folder):
+        self._cache_folder = folder
+        try:
+            os.makedirs(folder)
+        except:
+            pass
+
+    def put(self, item):
+        if self._cache_folder:
+            filepath = os.path.join(self._cache_folder, uuid.uuid4().hex)
+            pickle.dump(item, open(filepath, 'wb'))
+        if not self.last:
+            ret = self.queue.put(item)
         with self.lock:
             self.size.value += 1
             self.counter.value += 1
-        return ret
 
 
     def get(self, *args, **kwargs):
+        if self.last:
+            raise RuntimeError('Nobody should be reading this')
         ret = self.queue.get(*args, **kwargs)
         with self.lock:
             self.size.value -= 1
@@ -90,11 +109,27 @@ class PipelineStage:
         self._threads_occup = multiprocessing.Value('i', 0)
         self._thread_alloc_lock = multiprocessing.Lock()
         self.index = 0
+        self._is_last = False
         self._max_parallel = multiprocessing.cpu_count()
         self.should_display = True
+        self._init_barrier = None
+        self._cache_folder = None
+
+    def set_cache(self, folder):
+        stage_folder = os.path.join(folder, '{}_{}'.format(self.index, self.name))
+        self._cache_folder = stage_folder
+        if self._output_queue:
+            self._output_queue.set_cache(stage_folder)
+
+    def set_last(self):
+        self._is_last = True
+        self._output_queue = MyQueue(last=True)
+        if self._cache_folder:
+            self._output_queue.set_cache(self._cache_folder)
 
     def in_proc_init(self):
-        pass
+        if self._init_barrier:
+            self._init_barrier.wait()
 
     def get_max_parallel(self):
         return self._max_parallel
@@ -177,6 +212,10 @@ class DatasetStage(PipelineStage):
             # print(item)
             self.output_queue.put(item)
 
+class DualDatasetStage(DatasetStage):
+    def __init__(self):
+        super().__init__(SimpleDualDS())
+
 PROGRESSBAR_STAGES = 10
 def print_summary(start, stages):
     final_str = []
@@ -195,7 +234,9 @@ def print_summary(start, stages):
         formatted.append(input_info[level:])
         input_info = ''.join(formatted)
         
-        input_pipe = '[{}]'.format(input_info)
+        input_pipe = '[{}]>>'.format(input_info)
+        if s.index == 0:
+            input_pipe = ''
         if not s.should_display:
             final_str.append(input_pipe)
             continue
@@ -216,11 +257,11 @@ def print_summary(start, stages):
         elif alloc_threads > 0:
             state_color = yellow
         pipe_rep = '{}{}[{}|{}]{}'.format(state_color, s.name, alloc_threads, occup_threads, nc)
-        final_str.append('{}>>{}>>'.format(input_pipe, pipe_rep))
+        final_str.append('{}{}>>'.format(input_pipe, pipe_rep))
     final_str.append('[{}]'.format(s.output_queue.counter.value))
     final_str.append(' t[{}/{}] '.format(total_occup_threads, multiprocessing.cpu_count() ))
     final_str.append(str(time_passed))
-    print(''.join(final_str), end='\r')
+    print('\r' + ''.join(final_str), end='')
 
 
 def is_main_thread_alive():
@@ -294,7 +335,7 @@ def prioritize_threads(stages):
             # print('[+] prioritize_threads: stage {} gets {} threads'.format(s.name, t_to_alloc))
             s.add_thread_alloc(t_to_alloc)
             avail_threads -= t_to_alloc
-    print('[+] prioritize_threads: could not allocate all threads: left -', avail_threads)
+    # print('[+] prioritize_threads: could not allocate all threads: left -', avail_threads)
 
 @keyboard_int_guard
 def keepalive_worker(keepalive, stages):
@@ -393,9 +434,13 @@ class Pipeline:
         self._keepalive = multiprocessing.Value('d', time.time())
         self._threads_sem = multiprocessing.Semaphore(multiprocessing.cpu_count())
         self._keepalive_thread = None
+        self._cache_folder = None
 
     def get_samples(self, dtype, num):
         raise NotImplementedError()
+
+    def set_cache(self, folder):
+        self._cache_folder = os.path.join(folder, self.name)
 
     def _get_tip_queue(self):
         if not self._stages:
@@ -411,34 +456,49 @@ class Pipeline:
 
 
     def run(self):
-        self._keepalive_thread = multiprocessing.Process(target=keepalive_worker,
-                                                         args=(self._keepalive, self._stages))
-        # self._keepalive_thread.daemon = True
-        self._keepalive_thread.start()
-        
+        barrier = multiprocessing.Barrier(len(self._stages) + 1)
         ps = []
         for s in self._stages:
             print('[+] intializing process:', s.name)
+            if self._cache_folder:
+                s.set_cache(self._cache_folder)
+            s._init_barrier = barrier
             target = pipeline_stage_worker
             if s.get_max_parallel() == 1:
                 target = no_fork_pipeline_stage_worker
             p = multiprocessing.Process(target=target,
                                         args=(self._threads_sem, s, self._keepalive))
             ps.append(p)
-            # p.daemon = True
+        s.set_last()
         print('[+] starting processes')
         [p.start() for p in ps]
+        barrier.wait()
+
+    @property
+    def name(self):
+        return self.__class__.__name__
         
 
-    def read(self, size):
-        self._input_queue.put(size)
-        tip = self._get_tip_queue()
-        return [tip.get() for a in range(size)]
+    # def read(self, size):
+    #     self._input_queue.put(size)
+    #     tip = self._get_tip_queue()
+    #     return [tip.get() for a in range(size)]
 
     def iterate(self, size):
         while True:
             ret = self.read(size)
             yield ret
+
+    def keepalive(self, async=False, timeout=None):
+        self._input_queue.put(1)
+        self._keepalive_thread = multiprocessing.Process(target=keepalive_worker,
+                                                         args=(self._keepalive, self._stages))
+        self._keepalive_thread.daemon = True
+        self._keepalive_thread.start()
+        if async:
+            return
+        
+        self._keepalive_thread.join(timeout)
 
 
 class AudioMixerStage(PipelineStage):
@@ -497,13 +557,13 @@ class ImageToEncoding(PipelineStage):
         self._max_parallel = 1
 
     def in_proc_init(self):
-        super().in_proc_init()
         self.sess = tf.Session()
         imgs = tf.placeholder(tf.float32, [None, 224, 224, 3])
         self.vgg = Vgg16(imgs,
                          'vgg16_weights.npz',
                          self.sess,
                          weights_to_load_hack=28)
+        super().in_proc_init()
     
     def write(self, data):
         # print(data)
@@ -532,7 +592,7 @@ class PrinterStage(PipelineStage):
 class AudioMixerPipeline(Pipeline):
     def __init__(self):
         super().__init__()
-        self._stages.append(DatasetStage(SimpleDualDS()))
+        self._stages.append(DualDatasetStage())
         self._stages.append(AudioMixerStage())
         self._stages.append(AudioToImageStage())
         self._stages.append(ImageToEncoding())
@@ -560,10 +620,10 @@ class PrintSummary(PipelineStage):
 class AudioEncoderPipeline(Pipeline):
     def __init__(self):
         super().__init__()
-        self.add_stage(DatasetStage(SimpleDualDS()))
+        self.add_stage(DualDatasetStage())
         # self.add_stage(AudioJoinStage())
-        # self.add_stage(AudioToImageStage())
-        # self.add_stage(ImageToEncoding())
+        self.add_stage(AudioToImageStage())
+        self.add_stage(ImageToEncoding())
         # self.add_stage(TrainFormatterStage())
         # self.add_stage(PrintSummary())
 
@@ -587,16 +647,11 @@ if __name__ == '__main__':
         import platform
         # if 'Darwin' in platform.platform():
             # multiprocessing.set_start_method('spawn')
-        if len(sys.argv) < 2:
-            read_size = 8
-            print('[+] Using default read_size..')
-        else:
-            read_size = int(sys.argv[1])
-            print('[+] Using given read_size:', read_size)
-
         amp = AudioEncoderPipeline()
+        amp.set_cache('/Users/amiramitai/cache')
         amp.run()
-        ret = amp.read(read_size)
+        # ret = amp.read(16)
+        amp.keepalive()
     except KeyboardInterrupt:
         if amp._keepalive_thread:
             amp._keepalive_thread.terminate()

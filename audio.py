@@ -59,14 +59,6 @@ class AudioPatch:
         self.data = data
         self.min = str(int(datetime.datetime.now().minute / 3))
 
-    def cache(self, cls):
-        dir_path = os.path.join(os.environ['HOME'], 'cache', str(cls), self.min)
-        if not os.path.isdir(dir_path):
-            os.mkdir(dir_path)
-        file_name = '{}_{}'.format(os.path.basename(self.filename), str(self.loc))
-        open(os.path.join(dir_path, file_name), 'wb').write(pickle.dumps(self.data))
-
-
 
 def get_audio_patch_with_params(filename):
     af = AudioFile(filename)
