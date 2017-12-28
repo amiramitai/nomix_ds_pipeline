@@ -104,3 +104,13 @@ def get_image_with_audio(y, label):
     image = mel_db.T[0:MELS].T
     image = (image.clip(-80, 0) + 80) / 80
     return image, label
+
+
+def to_audiosegment(arr):
+    if arr.dtype in [np.float16, np.float32, np.float64]:
+        arr = np.int16(arr/np.max(np.abs(arr)) * 32767)
+    
+    return AudioSegment(arr.tobytes(),
+                        frame_rate=SAMPLE_RATE,
+                        sample_width=2,
+                        channels=1)
