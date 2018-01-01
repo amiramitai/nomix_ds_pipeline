@@ -1,0 +1,19 @@
+pipeline:
+  name: AudioEncoderPipeline
+  stages:
+    - name: Dataset
+      type: DualDatasetStage
+      params:
+        vocl_filename: ds_vocls
+        inst_filename: ds_inst
+    - name: AudioToImage
+      type: AudioToImageStage
+    - name: ImageToEncoding
+      type: ImageToEncodingStage
+      cache: 
+        filename: /Users/amiramitai/cache/ImageToEncoding
+        # seek_policy: CYCLIC
+        seek_policy: ONE_SHOT
+        # max_size: 1073741824
+        max_split: 2
+        max_size: 1048576
