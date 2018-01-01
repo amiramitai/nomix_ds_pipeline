@@ -1,6 +1,23 @@
 import threading
 import collections
 import queue as Queue
+import multiprocessing
+
+
+class StringValue:
+    def __init__(self, msg=None):
+        self._val = multiprocessing.Array('c', 30)
+        if msg:
+            self.value = msg
+
+    @property
+    def value(self):
+        return self._val.value.decode('utf-8')
+
+    @value.setter
+    def value(self, val):
+        self._val.value = val.encode('utf-8')
+        return val
 
 
 class AsyncGenerator:

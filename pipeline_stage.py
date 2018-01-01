@@ -22,19 +22,26 @@ class PipelineStage:
         self._max_parallel = multiprocessing.cpu_count()
         self.should_display = True
         self._init_barrier = None
-        self._cache_folder = None
+        self._cache_config = None
+        self._name_cache = None
+        self._next_stages = []
 
-    def set_cache(self, folder):
-        stage_folder = os.path.join(folder, '{}_{}'.format(self.index, self.name))
-        self._cache_folder = stage_folder
-        if self._output_queue:
-            self._output_queue.set_cache(stage_folder)
+    def set_cache(self, config):
+        self._cache_config = config
+        self._output_queue.set_cache(config)
+
+    def add_next_stage(self, stage):
+        self._next_stages.append(stage)
+        stage.input_queue = self.output_queue
+
+    def get_next_stages(self):
+        return self._next_stages
 
     def set_last(self):
         self._is_last = True
         self._output_queue = MyQueue(last=True)
-        if self._cache_folder:
-            self._output_queue.set_cache(self._cache_folder)
+        if self._cache_config:
+            self._output_queue.set_cache(self._cache_config)
 
     def in_proc_init(self):
         if self._init_barrier:
@@ -95,11 +102,18 @@ class PipelineStage:
 
     @property
     def name(self):
-        return self.__class__.__name__
+        if self._name_cache:
+            return self._name_cache
+        self._name_cache = self.__class__.__name__
+        if self._name_cache.endswith('Stage'):
+            self._name_cache = self._name_cache[:-5]
+        return self._name_cache
 
     def write(self, data):
         raise NotImplementedError()
 
+class LastStage(PipelineStage):
+    pass
 
 class DatasetStage(PipelineStage):
     def __init__(self, dataset):
@@ -119,8 +133,8 @@ class DatasetStage(PipelineStage):
 
 
 class DualDatasetStage(DatasetStage):
-    def __init__(self):
-        super().__init__(SimpleDualDS())
+    def __init__(self, params):
+        super().__init__(SimpleDualDS(params))
 
 
 class AudioMixerStage(PipelineStage):
@@ -154,7 +168,7 @@ class AudioToImageStage(PipelineStage):
         self.output_queue.put(image)
 
 
-class ImageToEncoding(PipelineStage):
+class ImageToEncodingStage(PipelineStage):
     def __init__(self):
         super().__init__()
         self._max_parallel = 1

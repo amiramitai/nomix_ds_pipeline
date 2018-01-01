@@ -2,15 +2,17 @@ import itertools
 import multiprocessing
 import time
 import os
+import ctypes
+import yaml
 
-from pipeline_stage import DualDatasetStage, ImageToEncoding, AudioToImageStage
+import pipeline_stage
 from myqueue import MyInputQueue
 from pipeline_workers import pipeline_stage_worker,\
                              no_fork_pipeline_stage_worker,\
                              keepalive_worker
 
 from pydub import AudioSegment
-from utils import AsyncGenerator
+from utils import AsyncGenerator, StringValue
 
 class Pipeline:
     def __init__(self):
@@ -26,6 +28,8 @@ class Pipeline:
 
     def set_cache(self, folder):
         self._cache_folder = os.path.join(folder, self.name)
+        for s in self._stages.values():
+            s.set_cache(self._cache_folder)
 
     def _get_tip_queue(self):
         if not self._stages:
@@ -34,8 +38,8 @@ class Pipeline:
         return self._stages[-1].output_queue
 
     def add_stage(self, stage):
-        queue = self._get_tip_queue()
-        stage.input_queue = queue
+        tip = self._get_tip_queue()
+        stage.input_queue = tip
         stage.index = len(self._stages)
         self._stages.append(stage)
 
@@ -45,8 +49,6 @@ class Pipeline:
         ps = []
         for s in self._stages:
             print('[+] intializing process:', s.name)
-            if self._cache_folder:
-                s.set_cache(self._cache_folder)
             s._init_barrier = barrier
             target = pipeline_stage_worker
             if s.get_max_parallel() == 1:
@@ -63,7 +65,6 @@ class Pipeline:
     def name(self):
         return self.__class__.__name__
 
-
     def iterate(self, size):
         while True:
             ret = self.read(size)
@@ -72,7 +73,8 @@ class Pipeline:
     def keepalive(self, async=False, timeout=None):
         self._input_queue.put(1)
         self._keepalive_thread = multiprocessing.Process(target=keepalive_worker,
-                                                         args=(self._keepalive, self._stages))
+                                                         args=(self._keepalive,
+                                                               self._stages))
         self._keepalive_thread.daemon = True
         self._keepalive_thread.start()
         if async:
@@ -100,19 +102,45 @@ class AudioEncoderPipeline(Pipeline):
         self.add_stage(DualDatasetStage())
         # self.add_stage(AudioJoinStage())
         self.add_stage(AudioToImageStage())
-        self.add_stage(ImageToEncoding())
+        self.add_stage(ImageToEncodingStage())
         # self.add_stage(TrainFormatterStage())
         # self.add_stage(PrintSummary())
 
+class NomixConfigFactory:
+    def __init__(self, yaml_path):
+        with open(yaml_path) as f:
+            self.map = yaml.safe_load(f)
+        self._stages = {}
+        self._pl = Pipeline()
+        self._load_stages_with_map(self.map['pipeline']['stages'])
+
+    def _load_stages_with_map(self, stages):
+        for stage in stages:
+            _cls = getattr(pipeline_stage, stage['type'])
+            if 'params' in stage:
+                inst = _cls(stage['params'])
+            else:
+                inst = _cls()
+            self._pl.add_stage(inst)
+            if 'cache' in stage:
+                inst.set_cache(stage['cache'])
+
+    def get_pipeline(self):
+        return self._pl
+        
 
 if __name__ == '__main__':
     try:
         import sys
         import multiprocessing
         import platform
+        if len(sys.argv) < 2:
+            print('Usage: python pipeline.py <config.yaml>')
+            sys.exit(1)
 
-        amp = AudioEncoderPipeline()
-        amp.set_cache('/Users/amiramitai/cache')
+        amp = NomixConfigFactory(sys.argv[1]).get_pipeline()
+        # amp = AudioEncoderPipeline()
+        # amp.set_cache('/Users/amiramitai/cache')
         amp.run()
         # ret = amp.read(16)
         amp.keepalive()

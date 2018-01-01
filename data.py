@@ -79,20 +79,14 @@ class LineDelimFileDataset(Dataset):
         return len(self.line_coords)
 
 
-class SimpleVoclDS(LineDelimFileDataset):
-    def __init__(self):
-        super().__init__('ds_vocls', DataType.AUDIO, DataClass.VOCAL)
-
-
-class SimpleInstDS(LineDelimFileDataset):
-    def __init__(self):
-        super().__init__('ds_inst', DataType.AUDIO, DataClass.INSTRUMENTAL)
-
-
 class SimpleDualDS:
-    def __init__(self):
-        self.voclds = SimpleVoclDS()
-        self.instds = SimpleInstDS()
+    def __init__(self, params):
+        # if not params:
+        #     params = {}
+        vocl_fn = params.get('vocls_filename', 'ds_vocls')
+        inst_fn = params.get('inst_filename', 'ds_inst')
+        self.voclds = LineDelimFileDataset(vocl_fn, DataType.AUDIO, DataClass.VOCAL)
+        self.instds = LineDelimFileDataset(inst_fn, DataType.AUDIO, DataClass.INSTRUMENTAL)
 
     def read(self, num):
         if num % 2 != 0:

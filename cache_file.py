@@ -7,12 +7,12 @@ import random
 
 PADDING_SIZE = 64
 SAMPLES_TO_FLUSH = 20
-MAX_CACHEFILE_SIZE = int(1 * 1024 * 1024)
+MAX_CACHEFILE_SIZE = 100 * 1024 * 1024
 MAX_CACHEFILE_RECORDS = 10000
 MAX_CACHEFILES_SPLIT = 3
 MAX_CACHEFILES_DIGITS = 4 
 
-class CachePolicy:
+class CacheSeekPolicy:
     ONE_SHOT = 0
     CYCLIC = 1
     RANDOM = 2
@@ -28,34 +28,32 @@ class EofException(Exception):
     pass
 
 class CacheCollection:
-    def __init__(self, filename, statusmsg=None, policy=CachePolicy.RANDOM):
-        self._filename = filename
+    def __init__(self, config):
+        self._config = config
+        self._filename = config['filename']
+        self._max_split = config.get('max_split', MAX_CACHEFILES_SPLIT)
+        self._max_records = config.get('max_records', MAX_CACHEFILE_RECORDS)
+        self._max_size = config.get('max_size', MAX_CACHEFILE_SIZE)
         self._caches = []
         self._loaded_caches = []
         self._fcursor = multiprocessing.Value('i', 0)
         self._stop_cache = multiprocessing.Value('b', 0)
         self._last_created_cache = 0
         self._lock = multiprocessing.RLock()
-        self._policy = policy
-        self._statusmsg = statusmsg
+        self._seekpolicy = getattr(CacheSeekPolicy, config.get('seek_policy', 'CYCLIC'))
         self._not_yet_full = []
         self._load_all()
-
-    def set_status(self, msg):
-        if not self._statusmsg:
-            return
-        self._statusmsg.value = msg
 
     def get_approx_cursor(self):
         if len(self._caches) == 0:
             return 0
         
-        whole = MAX_CACHEFILE_RECORDS * MAX_CACHEFILES_SPLIT
+        whole = self._max_records * self._max_split
         fcurs = self._fcursor.value
         cache_tell = 0
         if fcurs < len(self._caches):
             cache_tell = self._caches[self._fcursor.value].tell()
-        cur = self._fcursor.value * MAX_CACHEFILE_RECORDS + cache_tell
+        cur = self._fcursor.value * self._max_records + cache_tell
         return cur / whole
         
 
@@ -77,7 +75,7 @@ class CacheCollection:
             self._load_all()
             # print('[+] CacheCollection::write fcursor', self._fcursor.value, self._filename, os.getpid())
             i = self._fcursor.value
-            while i < MAX_CACHEFILES_SPLIT:
+            while i < self._max_split:
                 # print('[+] CacheCollection::write', i, self._filename)
                 if i >= len(self._caches):
                     # print('[+] i={} len(self._caches)={}'.format(i, len(self._caches)))
@@ -95,42 +93,41 @@ class CacheCollection:
                 # print('[+] writing..', i, cur_cache.tell())
                 cur_cache.write(item)
                 return
-            self.set_status('Max files split')
             self._stop_cache.value = 1
             raise StopCache('Max cache files split')
 
     def _iterate_with_policy(self, i, mode):
-        if self._policy == CachePolicy.RANDOM:
-            if mode == CacheMode.WRITE and len(self._caches) < MAX_CACHEFILES_SPLIT:
+        if self._seekpolicy == CacheSeekPolicy.RANDOM:
+            if mode == CacheMode.WRITE and len(self._caches) < self._max_split:
                 # print('[+] needing a new cache file split')
                 return len(self._caches), True
             return random.randint(0, len(self._caches)-1), False
 
         if self._should_rewind(i, mode):
-            # self.set_status('cyclic rewind')
             # print('[+] write - rewinding', self._filename, i)
             return 0, True
 
         return i + 1, True
 
     def _seek_with_policy(self, cache, i):
+        if not cache.is_full() or self._not_yet_full:
+            cache.end()
+            return
+        
         if self._fcursor.value != i:
             # if it's a different file then before
-            if self._policy == CachePolicy.CYCLIC:
+            if self._seekpolicy == CacheSeekPolicy.CYCLIC:
                 cache.seek(0, 0)
                 return
         
-        if self._policy == CachePolicy.RANDOM:
-            if not cache.is_full():
-                cache.end()
-                return
+        if self._seekpolicy == CacheSeekPolicy.RANDOM:
             cache.seek(random.randint(0, cache.get_num_records()), 0)
 
     def _should_rewind(self, i, mode):
-        if self._policy != CachePolicy.CYCLIC:
+        if self._seekpolicy != CacheSeekPolicy.CYCLIC:
             return False
         # print('[+] _should_rewind:', i, MAX_CACHEFILES_SPLIT)
-        if mode == CacheMode.WRITE and i < MAX_CACHEFILES_SPLIT - 1:
+        if mode == CacheMode.WRITE and i < self._max_split - 1:
             return False
 
         if mode == CacheMode.READ and i < len(self._caches) - 1:
@@ -139,22 +136,22 @@ class CacheCollection:
         return True
 
     def _requires_switching(self, cache, mode):
-        if self._policy == CachePolicy.RANDOM:
-            if not cache.is_full():
+        is_full = cache.is_full()
+        if is_full and self._not_yet_full:
+            # fill them all up first
+            self._not_yet_full = [c for c in self._caches if not c.is_full()]
+            return True
+
+        if self._seekpolicy == CacheSeekPolicy.RANDOM:
+            if not is_full:
                 return False
             return True
 
-        if self._policy == CachePolicy.CYCLIC:
-            if cache.is_full() and self._not_yet_full:
-                # fill them all up first
-                self._not_yet_full = [c for c in self._caches if not c.is_full()]
-                return True
-
-        if cache.tell() >= MAX_CACHEFILE_RECORDS:
+        if cache.tell() >= self._max_records:
             # print('[+] MAX_CACHEFILE_RECORDS', self._filename, cache.tell())
             return True
 
-        if (cache._get_size() + cache._header.sample_size) > MAX_CACHEFILE_SIZE:
+        if (cache._get_size() + cache._header.sample_size) > self._max_size:
             if cache.tell() >= cache.get_num_records():
                 # print('[+] MAX_CACHEFILE_SIZE', self._filename, cache._get_size())
                 return True
@@ -167,9 +164,7 @@ class CacheCollection:
             # No use to to try and reload
             return
         pattern = '{}.{}'.format(self._filename, '[0-9]' * MAX_CACHEFILES_DIGITS)
-        # print('[+] pattern:', pattern)
         cachelist = glob.glob(pattern)
-        # print('[+] cachelist:', cachelist)
         if len(cachelist) <= len(self._caches):
             # it doesn't seem to have new caches for us.. 
             return
@@ -178,7 +173,10 @@ class CacheCollection:
                 # print('[+] skipping a loaded cache:', c)
                 continue
             # print('[+] found a new cache. loading:', c)
-            cf = CacheFile(c, self._statusmsg)
+            config = dict(self._config)
+            config['filename'] = c
+            cf = CacheFile(config)
+            cf.end()
             self._caches.append(cf)
             if not cf.is_full():
                 self._not_yet_full.append(cf)
@@ -186,12 +184,13 @@ class CacheCollection:
 
     def _create_next(self):
         # print('[+] CacheCollection::_create_next', self._filename, len(self._caches))
-        next_filename = self._get_next_avail_name()
-        self._caches.append(CacheFile(next_filename, self._statusmsg))
+        config = dict(self._config)
+        config['filename'] = self._get_next_avail_name()
+        self._caches.append(CacheFile(config))
 
     def _get_next_avail_name(self):
         # print('[+] CacheCollection::_get_next_avail_name', self._filename, self._last_created_cache)
-        for i in range(self._last_created_cache, MAX_CACHEFILES_SPLIT):
+        for i in range(self._last_created_cache, self._max_split):
             fmt = '{}.{:0%dd}' % MAX_CACHEFILES_DIGITS
             next_filename = fmt.format(self._filename, i)
             # print('[+] next_filename:', next_filename)
@@ -218,15 +217,17 @@ class CacheFileHeader:
 
 
 class CacheFile:
-    def __init__(self, filename, statusmsg=None):
-        self._filename = filename
+    def __init__(self, config):
+        self._config = config
+        self._filename = config['filename']
+        self._max_records = config.get('max_records', MAX_CACHEFILE_RECORDS)
+        self._max_size = config.get('max_size', MAX_CACHEFILE_SIZE)
         self._header = CacheFileHeader()
         self._num_records = multiprocessing.Value('i', 0)
         # create file if does not exist
         self._initialized = False
         self._lock = multiprocessing.RLock()
         self._fcursor = multiprocessing.Value('i', 0)
-        self._statusmsg = statusmsg
         self._init()
 
     def __enter__(self):
@@ -253,10 +254,10 @@ class CacheFile:
         self._close()
 
     def is_full(self):
-        if (self._get_size() + self._header.sample_size) > MAX_CACHEFILE_SIZE:
+        if (self._get_size() + self._header.sample_size) > self._max_size:
             return True
 
-        if self.get_num_records() >= MAX_CACHEFILE_RECORDS:
+        if self.get_num_records() >= self._max_records:
             return True
 
         return False
@@ -355,7 +356,8 @@ class CacheFile:
             #     self._f.flush()
 
 if __name__ == '__main__':
-    print('[+] opening for write')
+    # print('[+] opening for write')
+    print(getattr(CacheSeekPolicy, {}.get('policy', 'CYCLIC')))
     # with CacheFile('/tmp/test') as cf:
     #     cf.end()
     #     cf.write(1)
@@ -366,14 +368,16 @@ if __name__ == '__main__':
     #     print(cf.read())
     #     print(cf.read())
 
-    with CacheFile('/Users/amiramitai/cache/AudioEncoderPipeline/0_DualDatasetStage') as cf:
-        data = 1
-        num_rec = cf.get_num_records()
-        for i in range(num_rec):
-            data = cf.read()
-            if not data:
-                break
-            print('[{}/{}] {}: {}'.format(i+1, num_rec, str(data)[:30], data[1]))
-            a = input()
-            if a in ['q', 'Q']:
-                break
+    # with CacheFile('/Users/amiramitai/cache/AudioEncoderPipeline/0_DualDatasetStage') as cf:
+    #     data = 1
+    #     num_rec = cf.get_num_records()
+    #     for i in range(num_rec):
+    #         data = cf.read()
+    #         if not data:
+    #             break
+    #         print('[{}/{}] {}: {}'.format(i+1, num_rec, str(data)[:30], data[1]))
+    #         a = input()
+    #         if a in ['q', 'Q']:
+    #             break
+
+    
