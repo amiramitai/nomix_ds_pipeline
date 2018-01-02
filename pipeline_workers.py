@@ -119,7 +119,7 @@ def prioritize_threads(stages):
             avail_threads -= t_to_alloc
 
 
-@keyboard_int_guard
+# @keyboard_int_guard
 def keepalive_worker(keepalive, stages):
     start = time.time()
     while is_main_thread_alive():
@@ -129,7 +129,7 @@ def keepalive_worker(keepalive, stages):
         time.sleep(KEEP_ALIVE_WORKER_SLEEP)
 
 
-@keyboard_int_guard
+# @keyboard_int_guard
 def write_thread_occup_guard(start_event, thread_sem, stage, item):
     thread_sem.acquire()
     try:
@@ -144,7 +144,7 @@ def write_thread_occup_guard(start_event, thread_sem, stage, item):
 
 STAGE_GET_TIMEOUT = 5000
 KEEP_ALIVE_TIMEOUT = 10000
-@keyboard_int_guard
+# @keyboard_int_guard
 def no_fork_pipeline_stage_worker(thread_sem, stage, keepalive):
     stage.in_proc_init()
     while True:
@@ -166,7 +166,7 @@ def no_fork_pipeline_stage_worker(thread_sem, stage, keepalive):
             traceback.print_exc()
 
 
-@keyboard_int_guard
+# @keyboard_int_guard
 def pipeline_stage_worker(thread_sem, stage, keepalive):
     stage.in_proc_init()
     spawned_procs = []

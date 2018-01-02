@@ -37,17 +37,17 @@ class LineDelimFileDataset(Dataset):
     def __init__(self, filename, _type, _class):
         super().__init__(_type, _class)
         print('[+] caching dataset from file', filename)
-        self.f = open(filename, 'r')
         self.filename = filename
         self.line_coords = []
         offset = 0
-        for line in self.f:
-            self.line_coords.append((offset, len(line)))
-            offset += len(line)
+        with open(filename) as f:
+            for line in f:
+                self.line_coords.append((offset, len(line)))
+                offset += len(line)
         #     if len(self.line_coords) % 1000 == 0:
         #         print(len(self.line_coords), end='\r')
         # print(len(self.line_coords))
-        self.f.seek(0)
+        # self.f.seek(0)
         self.coord_ptr = 0
         self.lock = multiprocessing.Lock()
 
@@ -69,10 +69,10 @@ class LineDelimFileDataset(Dataset):
         return
 
     def get_filename_for_coord(self, coord_off):
-        with self.lock:
+        with self.lock, open(self.filename) as f:
             offset, length = self.line_coords[coord_off]
-            self.f.seek(offset)
-            ret = self.f.read(length).strip()
+            f.seek(offset)
+            ret = f.read(length).strip()
         return ret
 
     def get_length(self):

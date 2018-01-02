@@ -169,15 +169,19 @@ class AudioToImageStage(PipelineStage):
 
 
 class ImageToEncodingStage(PipelineStage):
-    def __init__(self):
+    def __init__(self, params=None):
         super().__init__()
         self._max_parallel = 1
+        if not params:
+            params = {}
+        self._params = params
 
     def in_proc_init(self):
         self.sess = tf.Session()
         imgs = tf.placeholder(tf.float32, [None, 224, 224, 3])
+        weights = self._params.get('weights', 'vgg16_weights.npz')
         self.vgg = Vgg16(imgs,
-                         'vgg16_weights.npz',
+                         weights,
                          self.sess,
                          weights_to_load_hack=28)
         super().in_proc_init()
