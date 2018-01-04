@@ -7,9 +7,7 @@ import random
 
 PADDING_SIZE = 64
 SAMPLES_TO_FLUSH = 20
-MAX_CACHEFILE_SIZE = 100 * 1024 * 1024
-MAX_CACHEFILE_RECORDS = 10000
-MAX_CACHEFILES_SPLIT = 3
+DEFAULT_MAX_SPLIT = 1
 MAX_CACHEFILES_DIGITS = 4 
 
 class CacheSeekPolicy:
@@ -31,9 +29,12 @@ class CacheCollection:
     def __init__(self, config):
         self._config = config
         self._filename = config['filename']
-        self._max_split = config.get('max_split', MAX_CACHEFILES_SPLIT)
-        self._max_records = config.get('max_records', MAX_CACHEFILE_RECORDS)
-        self._max_size = config.get('max_size', MAX_CACHEFILE_SIZE)
+        self._max_split = config.get('max_split', DEFAULT_MAX_SPLIT)
+        self._max_records = config.get('max_records')
+        self._max_size = config.get('max_size')
+        if not self._max_records and not self._max_size and self._max_split > 1:
+            print('[!] has split but no limit to recordsnum/filesize')
+            self._max_split = 1
         self._caches = []
         self._loaded_caches = []
         self._fcursor = multiprocessing.Value('i', 0)
@@ -45,17 +46,29 @@ class CacheCollection:
         self._load_all()
 
     def get_approx_cursor(self):
-        if len(self._caches) == 0:
+        if not self._caches:
             return 0
         
-        whole = self._max_records * self._max_split
-        fcurs = self._fcursor.value
-        cache_tell = 0
-        if fcurs < len(self._caches):
-            cache_tell = self._caches[self._fcursor.value].tell()
-        cur = self._fcursor.value * self._max_records + cache_tell
-        return cur / whole
-        
+        if self._max_records:
+            whole = self._max_records * self._max_split
+            fcurs = self._fcursor.value
+            cache_tell = 0
+            if fcurs < len(self._caches):
+                cache_tell = self._caches[fcurs].tell()
+            cur = fcurs * self._max_records + cache_tell
+            return cur / whole
+        elif self._max_size:
+            h = self._caches[0]._header
+            sample_size = h.sample_size
+            whole = self._max_size * self._max_split
+            fcurs = self._fcursor.value
+            cache_tell = 0
+            if fcurs < len(self._caches):
+                cache_tell = h.size() + self._caches[fcurs].tell() * sample_size
+            cur = fcurs * self._max_size + cache_tell
+            return cur / whole
+
+        return 0       
 
     def read(self):
         # print('[+] CacheCollection::read', self._filename)
@@ -147,11 +160,11 @@ class CacheCollection:
                 return False
             return True
 
-        if cache.tell() >= self._max_records:
+        if self._max_records and cache.tell() >= self._max_records:
             # print('[+] MAX_CACHEFILE_RECORDS', self._filename, cache.tell())
             return True
 
-        if (cache._get_size() + cache._header.sample_size) > self._max_size:
+        if self._max_size and (cache._get_size() + cache._header.sample_size) > self._max_size:
             if cache.tell() >= cache.get_num_records():
                 # print('[+] MAX_CACHEFILE_SIZE', self._filename, cache._get_size())
                 return True
@@ -160,7 +173,7 @@ class CacheCollection:
 
     def _load_all(self):
         # print('[+] CacheCollection::_load_all', self._filename)
-        if len(self._caches) >= MAX_CACHEFILES_SPLIT:
+        if len(self._caches) >= self._max_split:
             # No use to to try and reload
             return
         pattern = '{}.{}'.format(self._filename, '[0-9]' * MAX_CACHEFILES_DIGITS)
@@ -220,8 +233,8 @@ class CacheFile:
     def __init__(self, config):
         self._config = config
         self._filename = config['filename']
-        self._max_records = config.get('max_records', MAX_CACHEFILE_RECORDS)
-        self._max_size = config.get('max_size', MAX_CACHEFILE_SIZE)
+        self._max_records = config.get('max_records')
+        self._max_size = config.get('max_size')
         self._header = CacheFileHeader()
         self._num_records = multiprocessing.Value('i', 0)
         # create file if does not exist
@@ -254,10 +267,10 @@ class CacheFile:
         self._close()
 
     def is_full(self):
-        if (self._get_size() + self._header.sample_size) > self._max_size:
+        if self._max_size and (self._get_size() + self._header.sample_size) > self._max_size:
             return True
 
-        if self.get_num_records() >= self._max_records:
+        if self._max_records and self.get_num_records() >= self._max_records:
             return True
 
         return False
