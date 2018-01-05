@@ -4,7 +4,7 @@ import uuid
 from cache_file import CacheCollection, StopCache
 
 
-DEFAULT_QUEUE_CAPACITY = 64
+DEFAULT_QUEUE_CAPACITY = 128
 EMPTY_QUEUE_SLEEP = 0.1
 WHITE_BG = '\033[5;30;47m'
 GREEN_BG = '\033[0;30;42m'
@@ -13,23 +13,31 @@ RED_BG = '\033[0;30;41m'
 GREEN = '\033[1;32;40m'
 NC = '\033[0m'
 PROGRESSBAR_STAGES = 15
+QUEUE_BLOCK_TIMEOUT = 0.5
+
+class QueueOverflow(Exception):
+    pass
 
 class BaseQueue:
     def __init__(self, config=None):
+        _config = config
         if not config:
-            config = {}
+            _config = {}
         
-        self._max_size = config.get('max_size', DEFAULT_QUEUE_CAPACITY)
+        self._max_size = _config.get('max_size', DEFAULT_QUEUE_CAPACITY)
         self.lock = multiprocessing.Lock()
         self._cache = None
+        self._drop = False
 
     def get_capacity(self):
         return self._max_size
 
     def get_input_info(self):
-        input_info = list(('{:%dd}'%(PROGRESSBAR_STAGES)).format(self.qsize()))
-        fract = min(self.qsize(), self._max_size) / self._max_size
-        level = int(fract * PROGRESSBAR_STAGES)
+        qsize = self.qsize()
+        disp = self.get_display_amount()
+        input_info = list(('{:%dd}'%(PROGRESSBAR_STAGES)).format(disp))
+        fract = min(qsize, self._max_size) / self._max_size
+        level = int(fract * (PROGRESSBAR_STAGES-1))
          
         cur = 0
         if self.is_caching():
@@ -49,9 +57,9 @@ class BaseQueue:
             restore_color = fg_color
 
         if self.is_caching():
-            input_info[cur_level-1] = ''.join([RED_BG, input_info[cur_level-1], restore_color])
+            input_info[cur_level] = ''.join([RED_BG, input_info[cur_level], restore_color])
         input_info[0] = ''.join([bg_color, input_info[0]])
-        input_info[level-1] = ''.join([fg_color, input_info[level-1]])
+        input_info[level] = ''.join([input_info[level], fg_color])
         input_info[-1] = ''.join([input_info[-1], NC])
         
         return ''.join(input_info)
@@ -61,6 +69,9 @@ class BaseQueue:
 
     def get_approx_cursor(self):
         raise RuntimeError('Should not be called')
+
+    def get_display_amount(self):
+        return self.qsize()
 
 class MyQueue(BaseQueue):
     def __init__(self, config):
@@ -73,6 +84,8 @@ class MyQueue(BaseQueue):
         self.queue = multiprocessing.Queue(self.get_capacity())
         if 'cache' in config:
             self._set_cache(config['cache'])
+
+        self._config = config
 
 
     def _set_cache(self, cache_config):
@@ -103,9 +116,10 @@ class MyQueue(BaseQueue):
                 self._is_caching.value = 0
 
     def put(self, item):
-        self._safe_write_cache(item)
         if not self._drop:
-            ret = self.queue.put(item)
+            # print('[+] {}::put'.format(self._config['name']))
+            ret = self.queue.put(item, True, QUEUE_BLOCK_TIMEOUT)
+        self._safe_write_cache(item)
         with self.lock:
             self.size.value += 1
             self.counter.value += 1
@@ -113,14 +127,21 @@ class MyQueue(BaseQueue):
 
     def get(self, *args, **kwargs):
         if self._drop:
-            raise RuntimeError('Nobody should be reading this')
+            raise RuntimeError('dropping queues should not be read')
         ret = self.queue.get(*args, **kwargs)
         with self.lock:
             self.size.value -= 1
         return ret
 
     def qsize(self):
+        if self._drop:
+            return 0
         return self.size.value
+
+    def get_display_amount(self):
+        if self._drop:
+            return self.counter.value
+        return self.qsize()
 
 class MyInputQueue(BaseQueue):
     def __init__(self):

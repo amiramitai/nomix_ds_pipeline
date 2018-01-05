@@ -21,7 +21,6 @@ class Pipeline:
     def __init__(self):
         self._stages = []
         self._input_queue = MyInputQueue()
-        self._threads_sem = multiprocessing.Semaphore(multiprocessing.cpu_count())
         self._keepalive_thread = None
         self._cache_folder = None
         self._context = Context()
@@ -45,6 +44,7 @@ class Pipeline:
     def run(self):
         # make sure all threads are initialized before start working
         init_barrier = multiprocessing.Barrier(len(self._stages) + 1)
+        thread_sem = multiprocessing.BoundedSemaphore(multiprocessing.cpu_count())
         ps = []
         for s in self._stages:
             print('[+] intializing process:', s.name)
@@ -53,7 +53,7 @@ class Pipeline:
                 target = no_fork_pipeline_stage_worker
             kwargs = {
                 'init_barrier': init_barrier,
-                'thread_sem': self._threads_sem,
+                'thread_sem': thread_sem,
                 'stage': s,
                 'context': self._context,
             }

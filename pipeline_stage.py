@@ -9,6 +9,8 @@ from data import DataClass, DataType, SimpleDualDS
 from vgg16 import Vgg16
 from audio import get_image_with_audio, to_audiosegment
 
+from exceptions import NoThreadSlots
+
 
 class PipelineStage:
     def __init__(self, config):
@@ -42,13 +44,15 @@ class PipelineStage:
     def use_thread_slot(self):
         with self._thread_alloc_lock:
             if self._threads_alloc.value < 1:
-                raise RuntimeError('BUG: No threads for allocation')
+                raise NoThreadSlots(self.name)
             
             self._threads_occup.value += 1
             self._threads_alloc.value -= 1
 
     def free_thread_slot(self):
         with self._thread_alloc_lock:
+            if self._threads_occup.value == 0:
+                print('[!!!!] WTF?!?!')
             self._threads_occup.value -= 1
 
     def get_occupied_threads(self):
@@ -62,22 +66,11 @@ class PipelineStage:
     def set_thread_alloc(self, val):
         with self._thread_alloc_lock:
             if val < 0:
-                print('[+] set_thread_alloc: {} BUG: {}'.format(self.name, val))
+                RuntimeError('BUG: negative thread alloc', self.name, val)
             self._threads_alloc.value = val
-
-    def add_thread_alloc(self, alloc):
-        with self._thread_alloc_lock:
-            self._threads_alloc.value += alloc
-            if self._threads_alloc.value < 0:
-                print('[+] set_thread_alloc: {} BUG: {}/{}'.format(self.name, self._threads_alloc.value, alloc))
 
     @property
     def output_queue(self):
-        return self._output_queue
-
-    @output_queue.setter
-    def output_queue(self, _output):
-        self._output_queue = _output
         return self._output_queue
 
     @property
