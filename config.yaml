@@ -1,5 +1,8 @@
 pipeline:
   name: AudioEncoderPipeline
+  # profiler:
+  #   host: '127.0.0.1'
+  #   prefix: 'nomix_ds.'
   stages:
     - name: Dataset
       type: DualDatasetStage
@@ -9,16 +12,18 @@ pipeline:
     - name: AudioToImage
       type: AudioToImageStage
       cache: 
-        filename: T:/cache/AudioToImage
+        filename: ../cache/AudioToImage
         seek_policy: ONE_SHOT
-        max_size: 2147483648
-        max_split: 50
+        # max_size: 2147483648
+        # max_split: 50
     - name: ImageToEncoding
       type: ImageToEncodingStage
       params:
         weights: ../vgg16_weights.npz
       cache: 
-        filename: T:/cache/ImageToEncoding
+        filename: ../cache/ImageToEncoding
         seek_policy: ONE_SHOT
-        max_size: 2147483648
-        max_split: 50
+      drop: true
+      
+        # max_size: 2147483648
+        # max_split: 50

@@ -3,7 +3,7 @@ import os
 import tensorflow as tf
 import numpy as np
 
-from myqueue import MyQueue, QUEUE_MAX_SIZE
+from myqueue import MyQueue
 from data import DataClass, DataType, SimpleDualDS
 
 from vgg16 import Vgg16
@@ -11,9 +11,9 @@ from audio import get_image_with_audio, to_audiosegment
 
 
 class PipelineStage:
-    def __init__(self):
+    def __init__(self, config):
         self._input_queue = None
-        self._output_queue = MyQueue(maxsize=QUEUE_MAX_SIZE)
+        self._output_queue = MyQueue(config)
         self._threads_alloc = multiprocessing.Value('i', 0)
         self._threads_occup = multiprocessing.Value('i', 0)
         self._thread_alloc_lock = multiprocessing.Lock()
@@ -21,14 +21,10 @@ class PipelineStage:
         self._is_last = False
         self._max_parallel = multiprocessing.cpu_count()
         self.should_display = True
-        self._init_barrier = None
         self._cache_config = None
         self._name_cache = None
-        self._next_stages = []
-
-    def set_cache(self, config):
-        self._cache_config = config
-        self._output_queue.set_cache(config)
+        self._next_stages = []   
+        self._params = config.get('params')
 
     def add_next_stage(self, stage):
         self._next_stages.append(stage)
@@ -37,15 +33,8 @@ class PipelineStage:
     def get_next_stages(self):
         return self._next_stages
 
-    def set_last(self):
-        self._is_last = True
-        self._output_queue = MyQueue(last=True)
-        if self._cache_config:
-            self._output_queue.set_cache(self._cache_config)
-
     def in_proc_init(self):
-        if self._init_barrier:
-            self._init_barrier.wait()
+        pass
 
     def get_max_parallel(self):
         return self._max_parallel
@@ -112,12 +101,10 @@ class PipelineStage:
     def write(self, data):
         raise NotImplementedError()
 
-class LastStage(PipelineStage):
-    pass
 
 class DatasetStage(PipelineStage):
-    def __init__(self, dataset):
-        super().__init__()
+    def __init__(self, config, dataset):
+        super().__init__(config)
         self._ds = dataset
 
     def write(self, data):
@@ -133,8 +120,8 @@ class DatasetStage(PipelineStage):
 
 
 class DualDatasetStage(DatasetStage):
-    def __init__(self, params):
-        super().__init__(SimpleDualDS(params))
+    def __init__(self, config):
+        super().__init__(config, SimpleDualDS(config['params']))
 
 
 class AudioMixerStage(PipelineStage):
@@ -169,12 +156,9 @@ class AudioToImageStage(PipelineStage):
 
 
 class ImageToEncodingStage(PipelineStage):
-    def __init__(self, params=None):
-        super().__init__()
+    def __init__(self, config):
+        super().__init__(config)
         self._max_parallel = 1
-        if not params:
-            params = {}
-        self._params = params
 
     def in_proc_init(self):
         self.sess = tf.Session()
@@ -184,7 +168,6 @@ class ImageToEncodingStage(PipelineStage):
                          weights,
                          self.sess,
                          weights_to_load_hack=28)
-        super().in_proc_init()
     
     def write(self, data):
         img, label = data
@@ -195,8 +178,8 @@ class ImageToEncodingStage(PipelineStage):
 
 
 class PrinterStage(PipelineStage):
-    def __init__(self):
-        super().__init__()
+    def __init__(self, config):
+        super().__init__(config)
         self.counter = 0
 
     def write(self, data):
@@ -204,8 +187,8 @@ class PrinterStage(PipelineStage):
         print('[+] {}. PrinterStage: {}'.format(self.counter, str(data)[:40] + '...'))
 
 class PrintSummary(PipelineStage):
-    def __init__(self):
-        super().__init__()
+    def __init__(self, config):
+        super().__init__(config)
         self.finished = multiprocessing.Value('i', 0)
         self.lock = multiprocessing.Lock()
         self.should_display = False

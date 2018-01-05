@@ -6,7 +6,7 @@ import time
 import threading
 import traceback
 
-from myqueue import EMPTY_QUEUE_SLEEP, QUEUE_MAX_SIZE
+from myqueue import EMPTY_QUEUE_SLEEP
 
 KEEP_ALIVE_WORKER_SLEEP = 0.2
 
@@ -83,8 +83,8 @@ def prioritize_threads(stages):
             avail_threads -= 1
             continue
         
-        input_priority = s.input_queue.qsize() / QUEUE_MAX_SIZE
-        output_priority = 1.0 - (s.output_queue.qsize() / QUEUE_MAX_SIZE)
+        input_priority = s.input_queue.qsize() / s.input_queue.get_capacity()
+        output_priority = 1.0 - (s.output_queue.qsize() / s.output_queue.get_capacity())
         current_alloc = s.get_occupied_threads() + s.get_thread_alloc()
         priority = input_priority * output_priority
         priorities.append(priority)
@@ -120,23 +120,33 @@ def prioritize_threads(stages):
 
 
 # @keyboard_int_guard
-def keepalive_worker(keepalive, stages):
+def keepalive_worker(context, stages):
     start = time.time()
     while is_main_thread_alive():
-        keepalive.value = time.time()
+        context.keepalive.value = time.time()
         prioritize_threads(stages)
         print_summary(start, stages)
         time.sleep(KEEP_ALIVE_WORKER_SLEEP)
 
 
 # @keyboard_int_guard
-def write_thread_occup_guard(start_event, thread_sem, stage, item):
+def write_thread_occup_guard(start_event, thread_sem, stage, profiler):
     thread_sem.acquire()
     try:
         stage.use_thread_slot()
         if start_event:
             start_event.set()
-        stage.write(item)
+        
+        if not profiler:
+            item = stage.input_queue.get(True, STAGE_GET_TIMEOUT)
+            stage.write(item)
+            return
+        
+        with profiler.record('{}.input_queue.get'.format(stage.name)):
+            item = stage.input_queue.get(True, STAGE_GET_TIMEOUT)
+        with profiler.record('{}.write'.format(stage.name)):
+            stage.write(item)
+    
     finally:
         stage.free_thread_slot()
         thread_sem.release()
@@ -145,19 +155,18 @@ def write_thread_occup_guard(start_event, thread_sem, stage, item):
 STAGE_GET_TIMEOUT = 5000
 KEEP_ALIVE_TIMEOUT = 10000
 # @keyboard_int_guard
-def no_fork_pipeline_stage_worker(thread_sem, stage, keepalive):
+def no_fork_pipeline_stage_worker(init_barrier, thread_sem, stage, context):
     stage.in_proc_init()
+    init_barrier.wait()
     while True:
         try:
             if stage.input_queue.qsize() == 0 or stage.get_thread_alloc() == 0:
                 time.sleep(EMPTY_QUEUE_SLEEP)
                 continue
-            
-            item = stage.input_queue.get(True, STAGE_GET_TIMEOUT)
-            write_thread_occup_guard(None, thread_sem, stage, item)
+            write_thread_occup_guard(None, thread_sem, stage, context.profiler)
             stage.output_queue.refresh_cache()
         except queue.Empty:
-            if (time.time() - keepalive.value) < KEEP_ALIVE_TIMEOUT:
+            if (time.time() - context.keepalive.value) < KEEP_ALIVE_TIMEOUT:
                 print('[+] keep alive timeout({}).. killing..'.format(stage.name))
                 return
         except KeyboardInterrupt:
@@ -167,32 +176,30 @@ def no_fork_pipeline_stage_worker(thread_sem, stage, keepalive):
 
 
 # @keyboard_int_guard
-def pipeline_stage_worker(thread_sem, stage, keepalive):
+def pipeline_stage_worker(init_barrier, thread_sem, stage, context):
     stage.in_proc_init()
+    init_barrier.wait()
     spawned_procs = []
     while True:
         try:
-            alive = []
-            for p in spawned_procs:
-                if p.is_alive():
-                    alive.append(p)
-                else:
-                    del p
-            spawned_procs = alive
             thread_alloc = stage.get_thread_alloc()
             if stage.input_queue.qsize() == 0 or thread_alloc == 0:
                 time.sleep(EMPTY_QUEUE_SLEEP)
                 continue
+            
             for t in range(thread_alloc):
-                item = stage.input_queue.get(True, STAGE_GET_TIMEOUT)
                 proc_event = multiprocessing.Event()
-                p = multiprocessing.Process(target=write_thread_occup_guard, args=(proc_event, thread_sem, stage, item))
-                p.start()
+                kwargs = {
+                    'start_event': proc_event,
+                    'thread_sem': thread_sem,
+                    'stage': stage,
+                    'profiler': context.profiler,
+                }
+                multiprocessing.Process(target=write_thread_occup_guard, kwargs=kwargs).start()
                 proc_event.wait(STAGE_GET_TIMEOUT)
-                spawned_procs.append(p)
             stage.output_queue.refresh_cache()
         except queue.Empty:
-            if (time.time() - keepalive.value) < KEEP_ALIVE_TIMEOUT:
+            if (time.time() - context.keepalive.value) < KEEP_ALIVE_TIMEOUT:
                 print('[+] keep alive timeout({}).. killing..'.format(stage.name))
                 return
         except KeyboardInterrupt:
