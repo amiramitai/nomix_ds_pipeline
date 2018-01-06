@@ -103,11 +103,11 @@ def prioritize_threads(stages):
         if avail_threads == 0:
             break
 
-        if priority > 0:
-            allocs.append(1)
-            avail_threads -= 1
-        else:
-            allocs.append(0)
+        # if priority > 0:
+        #     allocs.append(1)
+        #     avail_threads -= 1
+        # else:
+        allocs.append(0)
     
     # for the rest of avail threads, allocate by priority
     for i, (s, priority) in enumerate(stages_to_prior):
