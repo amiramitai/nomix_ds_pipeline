@@ -1,0 +1,36 @@
+pipeline:
+  name: AudioEncoderPipeline
+  server:
+    host: 0.0.0.0
+    port: 8000
+  # remotes:
+  #   - name: minizero
+  #     host: 127.0.0.1
+
+  # profiler:
+  #   host: '127.0.0.1'
+  #   prefix: 'nomix_ds.'
+  stages:
+    - name: Dataset
+      type: DualDatasetStage
+      params:
+        vocl_filename: T:\datasets\nomix_ds\ds_vocls
+        inst_filename: T:\datasets\nomix_ds\ds_inst
+        base_dir: T:\datasets\nomix_ds
+    - name: AudioToImage
+      type: AudioToImageStage
+      cache: 
+        filename: T:/cache/AudioToImage
+        seek_policy: ONE_SHOT
+        max_size: 2147483648
+        max_split: 50
+    - name: ImageToEncoding
+      type: ImageToEncodingStage
+      params:
+        weights: ../vgg16_weights.npz
+      cache: 
+        filename: T:/cache/ImageToEncoding
+        seek_policy: ONE_SHOT
+        max_size: 2147483648
+        max_split: 50
+      drop: true
