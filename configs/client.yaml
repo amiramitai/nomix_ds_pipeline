@@ -11,8 +11,9 @@ pipeline:
     - name: Dataset
       type: DualDatasetStage
       params:
-        vocl_filename: ds_vocls
-        inst_filename: ds_inst
+        vocl_filename: T:\datasets\nomix_ds\ds_vocls
+        inst_filename: T:\datasets\nomix_ds\ds_inst
+        base_dir: T:\datasets\nomix_ds
     - name: AudioToImage
       type: AudioToImageStage
       remotes:
