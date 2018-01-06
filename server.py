@@ -9,7 +9,7 @@ import numpy as np
 class MyServer(SimpleXMLRPCServer):
     def __init__(self, *args, **kwargs):
         self.quit = 0
-        super(MyServer, self).__init__(*args, *kwargs)
+        super().__init__(*args, *kwargs)
         self.register_function(self.kill, 'kill')
 
     def kill(self):

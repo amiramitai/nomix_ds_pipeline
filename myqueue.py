@@ -1,6 +1,7 @@
 import multiprocessing
 import os
 import uuid
+import xmlrpc.client
 from cache_file import CacheCollection, StopCache
 
 
@@ -19,12 +20,13 @@ class QueueOverflow(Exception):
     pass
 
 class BaseQueue:
-    def __init__(self, config=None):
-        _config = config
+    def __init__(self, config=None, context=None):
+        self._config = config
+        self._context = context
         if not config:
-            _config = {}
+            config = {}
         
-        self._max_size = _config.get('max_size', DEFAULT_QUEUE_CAPACITY)
+        self._max_size = config.get('max_size', DEFAULT_QUEUE_CAPACITY)
         self.lock = multiprocessing.Lock()
         self._cache = None
         self._drop = False
@@ -74,16 +76,23 @@ class BaseQueue:
         return self.qsize()
 
 class MyQueue(BaseQueue):
-    def __init__(self, config):
-        super().__init__(config)
+    def __init__(self, config=None, context=None):
+        if config is None:
+            config = {}
+        super().__init__(config, context)
         # drop items instead of queueing
         self._drop = config.get('drop', False)
+        self._name = config.get('name')
+        self._remotes = []
         self.size = multiprocessing.Value('i', 0)
         self.counter = multiprocessing.Value('i', 0)
         self._is_caching = multiprocessing.Value('i', 0)
         self.queue = multiprocessing.Queue(self.get_capacity())
         if 'cache' in config:
             self._set_cache(config['cache'])
+
+        if 'remotes' in config:
+            self._set_remotes(config['remotes'], context)
 
         self._config = config
 
@@ -93,6 +102,19 @@ class MyQueue(BaseQueue):
             # print('[+] set_cache', cache_path)
             self._cache = CacheCollection(cache_config)
             self._is_caching.value = 1
+
+    def _set_remotes(self, remotes_config, context):
+        with self.lock:
+            for remote in remotes_config:
+                name = remote.get('name')
+                self._remotes.append(context.remotes[name])
+
+    def _safe_put_remote(self, item):
+        try:
+            for remote in self._remotes:
+                remote.put((self._name, item))
+        except:
+            raise
 
     def get_approx_cursor(self):
         return self._cache.get_approx_cursor()
@@ -119,6 +141,7 @@ class MyQueue(BaseQueue):
         if not self._drop:
             # print('[+] {}::put'.format(self._config['name']))
             ret = self.queue.put(item, True, QUEUE_BLOCK_TIMEOUT)
+        self._safe_put_remote(item)
         self._safe_write_cache(item)
         with self.lock:
             self.size.value += 1

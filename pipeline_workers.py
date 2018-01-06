@@ -6,6 +6,8 @@ import time
 import threading
 import traceback
 import math
+import xmlrpc.client
+import pickle
 
 from myqueue import EMPTY_QUEUE_SLEEP
 from exceptions import NoThreadSlots
@@ -25,6 +27,21 @@ def keyboard_int_guard(func):
             sys.exit(1)
 
     return _inner
+
+def remote_pipe_send_worker(config, context):
+    print('[+] remote_pipe_send_worker thread started..')
+    uri = config.get('uri', "http://localhost:8000")
+    server = xmlrpc.client.ServerProxy(uri)
+    while is_main_thread_alive():
+        try:
+            for name, pipe in context.remotes.items():
+                if pipe.qsize() == 0:
+                    continue
+                remote_stage_name, item = pipe.get()
+                server.put_remote(remote_stage_name, pickle.dumps(item))
+        except:
+            traceback.print_exc()
+            time.sleep(2.0)
 
 #shutil.get_terminal_size((80, 20))
 def print_summary(start, stages):

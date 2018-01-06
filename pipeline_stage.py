@@ -13,9 +13,12 @@ from exceptions import NoThreadSlots
 
 
 class PipelineStage:
-    def __init__(self, config):
+    def __init__(self, config, context):
         self._input_queue = None
-        self._output_queue = MyQueue(config)
+        self._name = config.get('name')
+        self._params = config.get('params')
+        self._output_queue = MyQueue(config, context)
+        self._context = context
         self._threads_alloc = multiprocessing.Value('i', 0)
         self._threads_occup = multiprocessing.Value('i', 0)
         self._thread_alloc_lock = multiprocessing.Lock()
@@ -24,16 +27,6 @@ class PipelineStage:
         self._max_parallel = multiprocessing.cpu_count()
         self.should_display = True
         self._cache_config = None
-        self._name_cache = None
-        self._next_stages = []   
-        self._params = config.get('params')
-
-    def add_next_stage(self, stage):
-        self._next_stages.append(stage)
-        stage.input_queue = self.output_queue
-
-    def get_next_stages(self):
-        return self._next_stages
 
     def in_proc_init(self):
         pass
@@ -84,8 +77,8 @@ class PipelineStage:
 
     @property
     def name(self):
-        if self._name_cache:
-            return self._name_cache
+        if self._name:
+            return self._name
         self._name_cache = self.__class__.__name__
         if self._name_cache.endswith('Stage'):
             self._name_cache = self._name_cache[:-5]
@@ -96,8 +89,8 @@ class PipelineStage:
 
 
 class DatasetStage(PipelineStage):
-    def __init__(self, config, dataset):
-        super().__init__(config)
+    def __init__(self, config, context, dataset):
+        super().__init__(config, context)
         self._ds = dataset
 
     def write(self, data):
@@ -113,26 +106,26 @@ class DatasetStage(PipelineStage):
 
 
 class DualDatasetStage(DatasetStage):
-    def __init__(self, config):
-        super().__init__(config, SimpleDualDS(config['params']))
+    def __init__(self, config, context):
+        super().__init__(config, context, SimpleDualDS(config['params']))
 
 
-class AudioMixerStage(PipelineStage):
-    def write(self, data):
-        vocls, insts = data
-        comb = []
-        # import pdb; pdb.set_trace()
-        pool = multiprocessing.Pool()
-        comb = pool.imap(self._combine, enumerate(zip(vocls, insts)))
-        return comb
+# class AudioMixerStage(PipelineStage):
+#     def write(self, data):
+#         vocls, insts = data
+#         comb = []
+#         # import pdb; pdb.set_trace()
+#         pool = multiprocessing.Pool()
+#         comb = pool.imap(self._combine, enumerate(zip(vocls, insts)))
+#         return comb
 
-    def _combine(self, args):
-        i, (y1, y2) = args
-        vocl_seg = to_audiosegment(y1)
-        inst_seg = to_audiosegment(y2)
+#     def _combine(self, args):
+#         i, (y1, y2) = args
+#         vocl_seg = to_audiosegment(y1)
+#         inst_seg = to_audiosegment(y2)
 
-        combined = np.array(inst_seg.overlay(vocl_seg).get_array_of_samples())
-        return combined, 1
+#         combined = np.array(inst_seg.overlay(vocl_seg).get_array_of_samples())
+#         return combined, 1
 
 
 class AudioJoinStage(PipelineStage):
@@ -149,8 +142,8 @@ class AudioToImageStage(PipelineStage):
 
 
 class ImageToEncodingStage(PipelineStage):
-    def __init__(self, config):
-        super().__init__(config)
+    def __init__(self, config, context):
+        super().__init__(config, context)
         self._max_parallel = 1
 
     def in_proc_init(self):
@@ -171,8 +164,8 @@ class ImageToEncodingStage(PipelineStage):
 
 
 class PrinterStage(PipelineStage):
-    def __init__(self, config):
-        super().__init__(config)
+    def __init__(self, config, context):
+        super().__init__(config, context)
         self.counter = 0
 
     def write(self, data):
@@ -180,8 +173,8 @@ class PrinterStage(PipelineStage):
         print('[+] {}. PrinterStage: {}'.format(self.counter, str(data)[:40] + '...'))
 
 class PrintSummary(PipelineStage):
-    def __init__(self, config):
-        super().__init__(config)
+    def __init__(self, config, context):
+        super().__init__(config, context)
         self.finished = multiprocessing.Value('i', 0)
         self.lock = multiprocessing.Lock()
         self.should_display = False
