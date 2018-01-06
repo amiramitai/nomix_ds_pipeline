@@ -212,6 +212,34 @@ class Musdb18:
                 self.samples[key]['inst'].append(a)
 
 
+class Quasi:
+    def __init__(self, params):
+        self.samples = defaultdict(lambda: {'mix': [], 'vocl': [], 'inst': []})
+        path = params['path']
+
+        
+        for a in iterate_files(os.path.join(path, 'separation'), '.wav'):
+            key = os.path.basename(os.path.dirname(os.path.dirname(a))).lower()
+            filename = os.path.basename(a).lower()
+            if self._is_vocal_name(filename):
+                self.samples[key]['vocl'].append(a)
+                continue
+            if 'mix' in filename:
+                self.samples[key]['mix'].append(a)
+                continue
+
+            self.samples[key]['inst'].append(a)
+
+    def _is_vocal_name(self, name):
+        vocal_keywords = ['choir', 'speech', 'lv_', 'harmo', 'vox', 'voix', 'voic', 'voc']
+        for kw in vocal_keywords:
+            if kw in name:
+                return True
+        return False
+
+
+
+
 
 
 if __name__ == '__main__':
@@ -226,7 +254,8 @@ if __name__ == '__main__':
     # pprint(irmas.vocl)
     # pprint(irmas.inst)
     # pprint(JamAudio({'path':'/Volumes/t$/datasets/jam_audio'}).samples)
-    pprint(Musdb18({'path':'/Volumes/t$/datasets/musdb18'}).samples)
+    # pprint(Musdb18({'path':'/Volumes/t$/datasets/musdb18'}).samples)
+    pprint(Quasi({'path':'/Volumes/d$/nomix_data/datasets/QUASI'}).samples)
     
 
 
