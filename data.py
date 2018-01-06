@@ -172,7 +172,17 @@ class CCMixter:
             # else:
             #     raise RuntimeError('Unknown file', a)
 
+class Irmas:
+    def __init__(self, params):
+        path = params['path']
+        self.vocl = []
+        self.inst = []
 
+        for a in iterate_files(path, '.wav'):
+            if 'voi' in map(str.strip, open(a[:-4] + '.txt')):
+                self.vocl.append(a)
+            else:
+                self.inst.append(a)
 
 
 
@@ -183,7 +193,10 @@ if __name__ == '__main__':
     # get_audio_patch_with_params('../looperman-a-0054911-0001363-jpipes24-vocal-loop-enjoy-the-ride-dry.mp3', 14.19)
     # ld = LineDelimFileDataset(r'T:\datasets\nomix_ds\ds_vocls', r'T:\datasets\nomix_ds', DataType.AUDIO, DataClass.VOCAL)
     # pprint(DSD100({'path':'/Volumes/t$/datasets/DSD100'}).samples)
-    pprint(CCMixter({'path':'/Volumes/t$/datasets/ccmixter'}).samples)
+    # pprint(CCMixter({'path':'/Volumes/t$/datasets/ccmixter'}).samples)
+    # irmas = Irmas({'path':'/Volumes/t$/datasets/irmas'})
+    pprint(irmas.vocl)
+    pprint(irmas.inst)
 
     # import pdb; pdb.set_trace()
 
