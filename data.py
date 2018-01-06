@@ -3,6 +3,10 @@ import random
 import itertools
 import pickle
 import os
+from collections import defaultdict
+
+
+from utils import iterate_files, iterate_audio_files
 
 from audio import AudioFile, get_audio_patch_with_params
 from audio import MELS, HOP_LENGTH, SAMPLE_RATE, RMS_SILENCE_THRESHOLD, SILENCE_HOP_THRESHOLD
@@ -134,12 +138,32 @@ class DataSource:
         raise NotImplementedError()
 
 
+class DSD100:
+    def __init__(self):
+        self.samples = defaultdict(lambda: {'mixture': None, 'vocals': None, 'others': []})
+        
+        for a in iterate_files('/Volumes/t$/datasets/DSD100/Mixtures', '.wav'):
+            key = os.path.basename(os.path.dirname(a))
+            self.samples[key]['mixture'] = a
+        
+        for a in iterate_audio_files('/Volumes/t$/datasets/DSD100/Sources'):
+            key = os.path.basename(os.path.dirname(a))
+            if a.endswith('vocals.wav'):
+                self.samples[key]['vocals'] = a
+            else:
+                self.samples[key]['others'].append(a)
+                
+
+
 if __name__ == '__main__':
+    from pprint import pprint
     # get_audio_patch_with_params('../looperman-a-0064965-0000185-donnievyros-stop-me-cover.mp3')
     # get_audio_patch_with_params('../3rd/vgg16/looperman-a-0933074-0010983-mike0112-run-and-hide-version-1.mp3', 120 + 30)
     # get_audio_patch_with_params('../looperman-a-0054911-0001363-jpipes24-vocal-loop-enjoy-the-ride-dry.mp3', 14.19)
-    ld = LineDelimFileDataset(r'T:\datasets\nomix_ds\ds_vocls', r'T:\datasets\nomix_ds', DataType.AUDIO, DataClass.VOCAL)
-    import pdb; pdb.set_trace()
+    # ld = LineDelimFileDataset(r'T:\datasets\nomix_ds\ds_vocls', r'T:\datasets\nomix_ds', DataType.AUDIO, DataClass.VOCAL)
+    pprint(DSD100().samples)
+
+    # import pdb; pdb.set_trace()
 
 # 0.0034242335 - no
 # 0.0334502 - no

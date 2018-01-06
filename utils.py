@@ -2,6 +2,17 @@ import threading
 import collections
 import queue as Queue
 import multiprocessing
+import os
+
+
+def iterate_audio_files(path):
+    return iterate_files(path, ('.wav', '.aac', '.wav', '.ogg', '.wma', '.m4a'))
+
+def iterate_files(path, ext=''):
+    for root, dirs, files in os.walk(path):
+        for file in files:
+            if file.endswith(ext):
+                yield os.path.join(root, file)
 
 
 class StringValue:
