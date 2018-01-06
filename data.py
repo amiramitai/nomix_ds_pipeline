@@ -139,14 +139,15 @@ class DataSource:
 
 
 class DSD100:
-    def __init__(self):
+    def __init__(self, params):
         self.samples = defaultdict(lambda: {'mixture': None, 'vocals': None, 'others': []})
         
-        for a in iterate_files('/Volumes/t$/datasets/DSD100/Mixtures', '.wav'):
+        path = params['path']
+        for a in iterate_files(os.path.join(path, 'Mixtures'), '.wav'):
             key = os.path.basename(os.path.dirname(a))
             self.samples[key]['mixture'] = a
         
-        for a in iterate_audio_files('/Volumes/t$/datasets/DSD100/Sources'):
+        for a in iterate_files(os.path.join(path, 'Sources'), '.wav'):
             key = os.path.basename(os.path.dirname(a))
             if a.endswith('vocals.wav'):
                 self.samples[key]['vocals'] = a
@@ -161,7 +162,7 @@ if __name__ == '__main__':
     # get_audio_patch_with_params('../3rd/vgg16/looperman-a-0933074-0010983-mike0112-run-and-hide-version-1.mp3', 120 + 30)
     # get_audio_patch_with_params('../looperman-a-0054911-0001363-jpipes24-vocal-loop-enjoy-the-ride-dry.mp3', 14.19)
     # ld = LineDelimFileDataset(r'T:\datasets\nomix_ds\ds_vocls', r'T:\datasets\nomix_ds', DataType.AUDIO, DataClass.VOCAL)
-    pprint(DSD100().samples)
+    pprint(DSD100({'path':'/Volumes/t$/datasets/DSD100'}).samples)
 
     # import pdb; pdb.set_trace()
 
