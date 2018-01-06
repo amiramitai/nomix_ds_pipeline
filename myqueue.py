@@ -29,6 +29,7 @@ class BaseQueue:
         self._max_size = config.get('max_size', DEFAULT_QUEUE_CAPACITY)
         self.lock = multiprocessing.Lock()
         self._cache = None
+        self._remotes = []
         self._drop = False
 
     def get_capacity(self):
@@ -37,7 +38,11 @@ class BaseQueue:
     def get_input_info(self):
         qsize = self.qsize()
         disp = self.get_display_amount()
-        input_info = list(('{:%dd}'%(PROGRESSBAR_STAGES)).format(disp))
+
+        if self._remotes:
+            waiting_for_send = sum([r.qsize() for r in self._remotes])
+            disp = '{}|{}'.format(disp, waiting_for_send)
+        input_info = list(('{:>%d}'%(PROGRESSBAR_STAGES)).format(str(disp)))
         fract = min(qsize, self._max_size) / self._max_size
         level = int(fract * (PROGRESSBAR_STAGES-1))
          
@@ -83,7 +88,6 @@ class MyQueue(BaseQueue):
         # drop items instead of queueing
         self._drop = config.get('drop', False)
         self._name = config.get('name')
-        self._remotes = []
         self.size = multiprocessing.Value('i', 0)
         self.counter = multiprocessing.Value('i', 0)
         self._is_caching = multiprocessing.Value('i', 0)

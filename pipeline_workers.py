@@ -30,15 +30,20 @@ def keyboard_int_guard(func):
 
 def remote_pipe_send_worker(config, context):
     print('[+] remote_pipe_send_worker thread started..')
-    uri = config.get('uri', "http://localhost:8000")
-    server = xmlrpc.client.ServerProxy(uri)
+    servers = {}
+    for remote in config['remotes']:
+        uri = 'http://{}:{}'.format(remote['host'], remote['port'])
+        name = remote['name']
+        print('[+] connecting to {}/{}'.format(name, uri))
+        servers[name] = xmlrpc.client.ServerProxy(uri)
     while is_main_thread_alive():
         try:
             for name, pipe in context.remotes.items():
-                if pipe.qsize() == 0:
-                    continue
-                remote_stage_name, item = pipe.get()
-                server.put_remote(remote_stage_name, pickle.dumps(item))
+                while pipe.qsize() > 0:
+                    remote_stage_name, item = pipe.get()
+                    server = servers[name]
+                    server.put_remote(remote_stage_name, pickle.dumps(item))
+            time.sleep(5.0)
         except:
             traceback.print_exc()
             time.sleep(2.0)

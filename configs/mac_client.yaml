@@ -3,6 +3,7 @@ pipeline:
   remotes:
     - name: minizero
       host: minizero.local
+      port: 8000
 
   # profiler:
   #   host: '127.0.0.1'
@@ -11,13 +12,15 @@ pipeline:
     - name: Dataset
       type: DualDatasetStage
       params:
-        vocl_filename: /Volumes/t$/datasets/nomix_ds/ds_vocls.linux
-        inst_filename: /Volumes/t$/datasets/nomix_ds/ds_vocls.linux
+        vocl_filename: /Users/amiramitai/Projects/nomix/ds_vocls.linux
+        inst_filename: /Users/amiramitai/Projects/nomix/ds_vocls.linux
         base_dir: /Volumes/t$/datasets/nomix_ds
+      remotes:
+        - name: minizero
     - name: AudioToImage
       type: AudioToImageStage
-      # remotes:
-      #   - name: minizero
+      remotes:
+        - name: minizero
       # cache: 
       #   filename: ../cache/AudioToImage
       #   seek_policy: ONE_SHOT
