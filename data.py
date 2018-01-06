@@ -184,6 +184,34 @@ class Irmas:
             else:
                 self.inst.append(a)
 
+class JamAudio:
+    def __init__(self, params):
+        path = params['path']
+        self.samples = defaultdict(lambda: {'sing': [], 'nosing': []})
+
+        for a in iterate_audio_files(path):
+            key = os.path.basename(a)
+            for line in map(str.strip, open(a[:-4] + '.lab')):
+                frm, to, label = line.split()
+                self.samples[key][label].append((float(frm), float(to)))
+
+            self.samples[key]
+
+class Musdb18:
+    def __init__(self, params):
+        self.samples = defaultdict(lambda: {'mix': None, 'vocl': None, 'inst': []})
+        path = params['path']
+
+        for a in iterate_files(path, '.wav'):
+            key = os.path.basename(a)[:-6]
+            if a.endswith('_4.wav'):
+                self.samples[key]['vocl'] = a
+            elif a.endswith('_0.wav'):
+                self.samples[key]['mix'] = a
+            else:
+                self.samples[key]['inst'].append(a)
+
+
 
 
 if __name__ == '__main__':
@@ -195,8 +223,12 @@ if __name__ == '__main__':
     # pprint(DSD100({'path':'/Volumes/t$/datasets/DSD100'}).samples)
     # pprint(CCMixter({'path':'/Volumes/t$/datasets/ccmixter'}).samples)
     # irmas = Irmas({'path':'/Volumes/t$/datasets/irmas'})
-    pprint(irmas.vocl)
-    pprint(irmas.inst)
+    # pprint(irmas.vocl)
+    # pprint(irmas.inst)
+    # pprint(JamAudio({'path':'/Volumes/t$/datasets/jam_audio'}).samples)
+    pprint(Musdb18({'path':'/Volumes/t$/datasets/musdb18'}).samples)
+    
+
 
     # import pdb; pdb.set_trace()
 
