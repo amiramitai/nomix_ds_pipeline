@@ -23,28 +23,6 @@ class DataType:
     IMAGE = 1
     EMBED = 2
 
-class Track:
-    def __init__(self, filename):
-        self.filename = filename
-
-# class VocalTrack(Track):
-#     def __init__(self, filename):
-#         super().__init__(filename, DataClass.VOCAL)
-
-# class InstrumentalTrack(Track):
-#     def __init__(self, filename):
-#         super().__init__(filename, DataClass.INSTRUMENTAL)
-
-class MixtureWithVocalTrack(Track):
-    def __init__(self, filename, voc_filename):
-        super().__init__(filename)
-        self.vocal_filename = voc_filename
-
-
-
-class Dataset:
-    pass
-            
 
 class LineDelimFileDataset:
     def __init__(self, filename, base_dir):
@@ -314,6 +292,7 @@ class JamAudio:
             if item['nosing']:
                 yield filepath, random.choice(item['nosing'])
 
+
 class Musdb18:
     def __init__(self, params):
         self.samples = defaultdict(lambda: {'mix': None, 'vocl': None, 'inst': []})
@@ -354,7 +333,7 @@ class Musdb18:
                 yield inst
 
 
-class Quasi(Dataset):
+class Quasi:
     VOCAL_KEYWORDS = ['choir', 'speech', 'lv_', 'harmo', 'vox', 'voix', 'voic', 'voc']
     
     def __init__(self, params):

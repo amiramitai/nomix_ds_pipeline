@@ -101,17 +101,11 @@ class DatasetStage(PipelineStage):
     def write(self, data):
         if not isinstance(data, int):
             raise RuntimeError('Expected an integer')
-        # print('[+] getting {} vars'.format(data))
 
-        # gen = self._ds.read(data)
         v = next(self._vocls)
         i = next(self._instrumentals)
         self.output_queue.put(v)
         self.output_queue.put(i)
-        # for item in gen:
-        #     # print('[+] {}::write put'.format(self.__class__.__name__))
-        #     # print(item)
-        #     self.output_queue.put(item)
 
 
 class DualDatasetStage(DatasetStage):

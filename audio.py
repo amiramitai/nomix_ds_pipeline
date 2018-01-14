@@ -23,6 +23,7 @@ SILENCE_HOP_THRESHOLD = 0.30  # 30%
 RMS_SILENCE_THRESHOLD = 0.75  # RMS
 SECONDS_TO_READ = 2.8
 
+
 def get_net_duration(filename):
     dur = get_duration(filename)
     metadata_filename = os.path.splitext(filename)[0] + '.json'
@@ -122,10 +123,6 @@ def get_rand_audio_patch(filename, _range=None):
     return y
 
 
-
-    # if _range == len(silence):
-
-    # print('[+] {} getting audio patch'.format(i))
     CPRECISION = 0.01
     toread = math.ceil(((MELS * HOP_LENGTH) / SAMPLE_RATE) / CPRECISION) * CPRECISION
     for i in range(10):
@@ -149,40 +146,7 @@ def get_rand_audio_patch(filename, _range=None):
     raise BadAudioFile()
 
 
-
-# def get_audio_patch_with_params(filename):
-#     af = AudioFile(filename)
-#     dur = af.get_duration()
-#     # print('[+] {} getting audio patch'.format(i))
-#     CPRECISION = 0.01
-#     toread = math.ceil(((MELS * HOP_LENGTH) / SAMPLE_RATE) / CPRECISION) * CPRECISION
-#     for i in range(10):
-#         loc = random.uniform(0, dur-toread)
-#         af.seek(loc)        
-#         y = af.read(toread)
-#         if y.ndim == 2:
-#             y = y[0]
-
-
-#         if len(y) < MELS * HOP_LENGTH:
-#             print('[+] get_audio_patch_with_params: got too short for {}/y:{}/loc:{}/dur:{}'.format(filename, len(y), format_secs(loc), dur))
-#             continue
-#         rms = librosa.feature.rmse(y=y) 
-#         # if rms.mean() > 0.05:
-#         #     return y
-#         if sum(rms[0]) > 5.0:
-#             # print(len(y), filename)
-#             return AudioPatch(y, filename, loc)
-    
-#     raise BadAudioFile()
-        # else:
-        #     fmtstr = '[+] {} patch is not loud enough:\n\t{}\n\t{}\n\t{}\n\t{}'
-        #     print(fmt.str.format(i, filename, format_secs(loc), rms.mean(), sum(rms[0])))
-
-
 def get_image_with_audio(y, label):
-    # print('[+] {} turning to mel..'.format(i))
-    # print(len(y))
     mel = librosa.feature.melspectrogram(y=y,
                                          sr=SAMPLE_RATE,
                                          n_mels=MELS,
