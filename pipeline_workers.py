@@ -227,7 +227,8 @@ def pipeline_stage_worker(init_barrier, thread_sem, stage, context):
                 # threads need to finish
                 if thread_alloc < len(worker_cancel_events):
                     events_to_cancel = len(worker_cancel_events) - thread_alloc
-                    # print('[XXXX] canceling in {}: {} events [MT]'.format(stage.name, events_to_cancel))
+                    # print('[XXXX] {}: canceling {} events. ({} alloced {} occup) [MT]'\
+                            # .format(stage.name, events_to_cancel, thread_alloc, thread_occup))
                     for e in worker_cancel_events[:events_to_cancel]:
                         e.set()
                     time.sleep(EMPTY_QUEUE_SLEEP)
