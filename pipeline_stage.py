@@ -4,10 +4,10 @@ import tensorflow as tf
 import numpy as np
 
 from myqueue import MyQueue
-from data import DataClass, DataType, SimpleDualDS
+from data import DataClass, DataType, NomixDS, MultiDatasets
 
 from vgg16 import Vgg16
-from audio import get_image_with_audio, to_audiosegment
+from audio import get_image_with_audio, to_audiosegment, get_rand_audio_patch
 
 from exceptions import NoThreadSlots
 
@@ -40,7 +40,7 @@ class PipelineStage:
                 raise NoThreadSlots(self.name)
             
             self._threads_occup.value += 1
-            self._threads_alloc.value -= 1
+            # self._threads_alloc.value -= 1
 
     def free_thread_slot(self):
         with self._thread_alloc_lock:
@@ -92,23 +92,38 @@ class DatasetStage(PipelineStage):
     def __init__(self, config, context, dataset):
         super().__init__(config, context)
         self._ds = dataset
+        print('self._ds', dataset)
+        self._vocls = dataset.vocals()
+        print('self._vocls', self._vocls)
+        self._instrumentals = dataset.instrumentals()
+        print('self._instru', self._instrumentals)
 
     def write(self, data):
         if not isinstance(data, int):
             raise RuntimeError('Expected an integer')
         # print('[+] getting {} vars'.format(data))
 
-        gen = self._ds.read(data)
-        for item in gen:
-            # print('[+] {}::write put'.format(self.__class__.__name__))
-            # print(item)
-            self.output_queue.put(item)
+        # gen = self._ds.read(data)
+        v = next(self._vocls)
+        i = next(self._instrumentals)
+        self.output_queue.put(v)
+        self.output_queue.put(i)
+        # for item in gen:
+        #     # print('[+] {}::write put'.format(self.__class__.__name__))
+        #     # print(item)
+        #     self.output_queue.put(item)
 
 
 class DualDatasetStage(DatasetStage):
     def __init__(self, config, context):
         super().__init__(config, context, SimpleDualDS(config['params']))
 
+
+
+class MultiDatasetsStage(DatasetStage):
+    def __init__(self, config, context):
+        super().__init__(config, context, MultiDatasets(config['params']))
+        self._max_parallel = 1
 
 # class AudioMixerStage(PipelineStage):
 #     def write(self, data):
@@ -134,6 +149,17 @@ class AudioJoinStage(PipelineStage):
             self.output_queue.put((vocl, 1))
             self.output_queue.put((inst, 0))
 
+
+class FilenameToAudio(PipelineStage):
+    def write(self, data):
+        _range = None
+        filename, label = data
+        if isinstance(filename, tuple):
+            filename, _range = filename
+
+        aud = get_rand_audio_patch(filename, _range)
+        self.output_queue.put((aud, label))
+    
 
 class AudioToImageStage(PipelineStage):
     def write(self, data):

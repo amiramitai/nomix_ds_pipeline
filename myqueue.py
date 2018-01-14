@@ -13,7 +13,7 @@ BLUE_BG = '\033[0;30;44m'
 RED_BG = '\033[0;30;41m'
 GREEN = '\033[1;32;40m'
 NC = '\033[0m'
-PROGRESSBAR_STAGES = 15
+PROGRESSBAR_STAGES = 10
 QUEUE_BLOCK_TIMEOUT = 0.5
 
 class QueueOverflow(Exception):
@@ -63,9 +63,10 @@ class BaseQueue:
         if cur > fract:
             restore_color = fg_color
 
-        if self.is_caching():
+        if self.is_caching() and cur_level > 0:
             input_info[cur_level] = ''.join([RED_BG, input_info[cur_level], restore_color])
-        input_info[0] = ''.join([bg_color, input_info[0]])
+        if level > 0:
+            input_info[0] = ''.join([bg_color, input_info[0]])
         input_info[level] = ''.join([input_info[level], fg_color])
         input_info[-1] = ''.join([input_info[-1], NC])
         

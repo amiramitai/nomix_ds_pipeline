@@ -1,32 +1,61 @@
 pipeline:
   name: AudioEncoderPipeline
-  remotes:
-    - name: minizero
-      host: minizero.local
-      port: 8000
+  # remotes:
+  #   - name: minizero
+  #     host: minizero.local
+  #     port: 8000
 
   # profiler:
   #   host: '127.0.0.1'
   #   prefix: 'nomix_ds.'
   stages:
     - name: Dataset
-      type: DualDatasetStage
+      type: MultiDatasetsStage
       params:
-        vocl_filename: /Users/amiramitai/Projects/nomix/ds_vocls.linux
-        inst_filename: /Users/amiramitai/Projects/nomix/ds_vocls.linux
-        base_dir: /Volumes/t$/datasets/nomix_ds
-      remotes:
-        - name: minizero
-    - name: AudioToImage
+        - type: NomixDS
+          cache: /Users/amiramitai/Projects/nomix/cache/nomixds.pickle
+          params: 
+            vocl_filename: /Users/amiramitai/Projects/nomix/ds_vocls.linux
+            inst_filename: /Users/amiramitai/Projects/nomix/ds_vocls.linux
+            base_dir: /Volumes/t$/datasets/nomix_ds
+        - type: DSD100
+          cache: /Users/amiramitai/Projects/nomix/cache/dsd100.pickle
+          params: 
+            path: /Volumes/t$/datasets/DSD100
+        - type: CCMixter
+          cache: /Users/amiramitai/Projects/nomix/cache/ccmixter.pickle
+          params: 
+            path: /Volumes/t$/datasets/ccmixter
+        - type: Irmas
+          cache: /Users/amiramitai/Projects/nomix/cache/irmas.pickle
+          params: 
+            path: /Volumes/t$/datasets/irmas
+        - type: JamAudio
+          cache: /Users/amiramitai/Projects/nomix/cache/jamaudio.pickle
+          params: 
+            path: /Volumes/t$/datasets/jam_audio
+        - type: Musdb18
+          cache: /Users/amiramitai/Projects/nomix/cache/musdb18.pickle
+          params: 
+            path: /Volumes/t$/datasets/musdb18
+        - type: Quasi
+          cache: /Users/amiramitai/Projects/nomix/cache/quasi.pickle
+          params: 
+            path: /Volumes/t$/datasets/quasi
+      # remotes:
+      #   - name: minizero
+    - name: ToAudio
+      type: FilenameToAudio
+    - name: ToImage
       type: AudioToImageStage
-      remotes:
-        - name: minizero
+      # remotes:
+      #   - name: minizero
       # cache: 
       #   filename: ../cache/AudioToImage
       #   seek_policy: ONE_SHOT
       #   max_size: 2147483648
       #   max_split: 50
-    - name: ImageToEncoding
+    - name: ToEncoding
       type: ImageToEncodingStage
       params:
         weights: ../vgg16_weights.npz
