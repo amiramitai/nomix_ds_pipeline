@@ -92,11 +92,12 @@ class DatasetStage(PipelineStage):
     def __init__(self, config, context, dataset):
         super().__init__(config, context)
         self._ds = dataset
-        print('self._ds', dataset)
-        self._vocls = dataset.vocals()
-        print('self._vocls', self._vocls)
-        self._instrumentals = dataset.instrumentals()
-        print('self._instru', self._instrumentals)
+        self._vocls = None
+        self._instrumentals = None
+
+    def in_proc_init(self):
+        self._vocls = self._ds.vocals()
+        self._instrumentals = self._ds.instrumentals()
 
     def write(self, data):
         if not isinstance(data, int):
