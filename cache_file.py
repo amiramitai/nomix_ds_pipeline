@@ -4,6 +4,7 @@ import glob
 import os
 import multiprocessing
 import random
+import numpy as np
 
 PADDING_SIZE = 64
 SAMPLES_TO_FLUSH = 20
@@ -27,6 +28,7 @@ class EofException(Exception):
 
 class CacheCollection:
     def __init__(self, config):
+        print(config)
         self._config = config
         self._filename = config['filename']
         self._max_split = config.get('max_split', DEFAULT_MAX_SPLIT)
@@ -69,6 +71,38 @@ class CacheCollection:
             return cur / whole
 
         return 0       
+
+    def _get_indices_for_global_index(self, start_indices, index):
+        for i, si in enumerate(start_indices):
+            if si > index:
+                return i-1,  index - start_indices[i-1]
+            
+
+    def random_iterator(self, batch_size):
+        total_records = 0
+        start_indices = []
+
+        for cache in self._caches:
+            start_indices.append(i)
+            total_records += cache.get_num_records()
+        perm = np.random.permutation(total_records)
+        batch = []
+        for index in perm:
+            f, i = self._get_indices_for_global_index(start_indices, index)
+            c = self._caches[f]
+            batch.append(c._read_from_location(i))
+            if len(batch > batch_size):
+                yield batch
+                batch = []
+            
+            
+                
+            self.seek
+
+    def get_num_samples(self):
+        with self._lock:
+            return sum([cache.get_num_records() for cache in self._caches])
+
 
     def read(self):
         # print('[+] CacheCollection::read', self._filename)
@@ -313,7 +347,7 @@ class CacheFile:
                 self._fcursor.value += i
             elif mode == 2:
                 self._fcursor.value = max(self._num_records.value - i, 0)
-        
+
 
     def end(self):
         # print('\t[+] end', self._filename)
@@ -342,8 +376,15 @@ class CacheFile:
 
     def read(self):
         # print('\t[+] read', self._filename)
+        with self._lock:
+            loc = self._fcursor.value
+            ret = self._read_from_location(loc)
+            self._fcursor.value = loc + 1
+            return ret
+
+    def _read_from_location(self, loc):
         with self._lock, self._open() as f:
-            f.seek(self._header.size() + self._fcursor * self._header.sample_size)
+            f.seek(self._header.size() + loc * self._header.sample_size)
             buff = f.read(self._header.sample_size)
             if not buff:
                 return None
@@ -370,7 +411,12 @@ class CacheFile:
 
 if __name__ == '__main__':
     # print('[+] opening for write')
-    print(getattr(CacheSeekPolicy, {}.get('policy', 'CYCLIC')))
+    # print(getattr(CacheSeekPolicy, {}.get('policy', 'CYCLIC')))
+    cc = CacheCollection({'filename': 'T:\\cache\\AudioToImage', 'seek_policy': 'ONE_SHOT', 'max_size': 2147483648, 'max_split': 50})
+    print(cc.get_num_samples())
+
+    #{'filename': 'T:\\cache\\AudioToImage', 'seek_policy': 'ONE_SHOT', 'max_size': 2147483648, 'max_split': 50}
+    #{'filename': 'T:\\cache\\ImageToEncoding', 'seek_policy': 'ONE_SHOT', 'max_size': 2147483648, 'max_split': 50}  
     # with CacheFile('/tmp/test') as cf:
     #     cf.end()
     #     cf.write(1)
