@@ -5,7 +5,7 @@ import xmlrpc.client
 from cache_file import CacheCollection, StopCache
 
 
-DEFAULT_QUEUE_CAPACITY = 512
+DEFAULT_QUEUE_CAPACITY = 1024
 EMPTY_QUEUE_SLEEP = 0.1
 WHITE_BG = '\033[5;30;47m'
 GREEN_BG = '\033[0;30;42m'
@@ -13,7 +13,7 @@ BLUE_BG = '\033[0;30;44m'
 RED_BG = '\033[0;30;41m'
 GREEN = '\033[1;32;40m'
 NC = '\033[0m'
-PROGRESSBAR_STAGES = 10
+DEFAULT_PROGRESSBAR_STAGES = 15
 QUEUE_BLOCK_TIMEOUT = 0.5
 
 class QueueOverflow(Exception):
@@ -27,6 +27,7 @@ class BaseQueue:
             config = {}
         
         self._max_size = config.get('max_size', DEFAULT_QUEUE_CAPACITY)
+        self._progress_stages = config.get('progress_stages', DEFAULT_PROGRESSBAR_STAGES)
         self.lock = multiprocessing.Lock()
         self._cache = None
         self._remotes = []
@@ -42,15 +43,15 @@ class BaseQueue:
         if self._remotes:
             waiting_for_send = sum([r.qsize() for r in self._remotes])
             disp = '{}|{}'.format(disp, waiting_for_send)
-        input_info = list(('{:>%d}'%(PROGRESSBAR_STAGES)).format(str(disp)))
+        input_info = list(('{:>%d}'%(self._progress_stages)).format(str(disp)))
         fract = min(qsize, self._max_size) / self._max_size
-        level = int(fract * (PROGRESSBAR_STAGES-1))
+        level = int(fract * (self._progress_stages-1))
          
         cur = 0
         if self.is_caching():
             self.refresh_cache()
             cur = self.get_approx_cursor()
-        cur_level = int(cur * (PROGRESSBAR_STAGES-1))
+        cur_level = int(cur * (self._progress_stages-1))
 
         # colors
         bg_color = WHITE_BG
