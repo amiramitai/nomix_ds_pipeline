@@ -439,9 +439,9 @@ class MultiDatasets:
                 
                 for i in reversed(sorted(ended)):
                     del iters[i]
-                    print('[+] iterator has finished for', i, label)
+                    # print('[+] iterator has finished for', i, label)
             
-            print('[+] finished all iterators')
+            # print('[+] finished all iterators')
                 
 
 if __name__ == '__main__':
