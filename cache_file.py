@@ -76,28 +76,55 @@ class CacheCollection:
         for i, si in enumerate(start_indices):
             if si > index:
                 return i-1,  index - start_indices[i-1]
-            
+        # print('last!!', start_indices, index)
+        return i, index - si
 
-    def random_iterator(self, batch_size):
+    def random_iterator(self, batch_size, test=False):
         total_records = 0
         start_indices = []
 
         for cache in self._caches:
-            start_indices.append(i)
+            start_indices.append(total_records)
             total_records += cache.get_num_records()
-        perm = np.random.permutation(total_records)
-        batch = []
+        fract = 0.85
+        if test:
+            fract = 0.15
+        set_records = int(total_records * fract)
+        perm = np.random.permutation(set_records)
+        features = []
+        labels = []
         for index in perm:
-            f, i = self._get_indices_for_global_index(start_indices, index)
+            head = 0
+            if not test:
+                head = total_records - set_records
+            f, i = self._get_indices_for_global_index(start_indices, head + index)
             c = self._caches[f]
-            batch.append(c._read_from_location(i))
-            if len(batch > batch_size):
-                yield batch
-                batch = []
-            
-            
-                
-            self.seek
+            x, y = c._read_from_location(i)
+            try:
+                features.append(x.reshape((224, 224, 1)))
+                labels.append(y)
+            except:
+                print('failed with x', x.shape)
+                continue
+            if len(features) >= batch_size:
+                yield np.array(features), np.array(labels)
+                features = []
+                labels = []
+
+    def mean(self):
+        items = 0
+        item_sums = 0
+        cachei = 0
+        for cache in self._caches:
+            for i in range(cache.get_num_records()):
+                print(cachei, i)
+                item = cache.read()[0]
+                if item.shape != (224, 224):
+                    continue
+                items += 1
+                item_sums += item.mean()
+            cachei += 1
+        return item_sums / items
 
     def get_num_samples(self):
         with self._lock:

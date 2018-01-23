@@ -19,12 +19,17 @@ import traceback
 
 
 class Vgg16:
-    def __init__(self, imgs, weights=None, sess=None, trainable=False, weights_to_load_hack=32):
+    def __init__(self, imgs, weights=None, mean=None, classes=1000, sess=None,
+                 trainable=False, weights_to_load_hack=32):
+        self.classes = classes
+        if not mean:
+            mean = [123.68, 116.779, 103.939]
+        self.mean = mean
         self.imgs = imgs
         self.trainable = trainable
         self.convlayers()
         self.fc_layers()
-        self.probs = tf.nn.softmax(self.fc3l)
+        # self.probs = tf.nn.softmax(self.fc3l)
         self.parameters = self.parameters[:weights_to_load_hack]
         if weights is not None and sess is not None:
             self.load_weights(weights, sess, weights_to_load_hack)
@@ -35,12 +40,12 @@ class Vgg16:
 
         # zero-mean input
         with tf.name_scope('preprocess') as scope:
-            mean = tf.constant([123.68, 116.779, 103.939], dtype=tf.float32, shape=[1, 1, 1, 3], name='img_mean')
+            mean = tf.constant(self.mean, dtype=tf.float32, shape=[1, 1, 1, len(self.mean)], name='img_mean')
             images = self.imgs-mean
 
         # conv1_1
         with tf.name_scope('conv1_1') as scope:
-            kernel = tf.Variable(tf.truncated_normal([3, 3, 3, 64], dtype=tf.float32,
+            kernel = tf.Variable(tf.truncated_normal([3, 3, 1, 64], dtype=tf.float32,
                                                      stddev=1e-1), name='weights')
             conv = tf.nn.conv2d(images, kernel, [1, 1, 1, 1], padding='SAME')
             biases = tf.Variable(tf.constant(0.0, shape=[64], dtype=tf.float32),
@@ -243,10 +248,10 @@ class Vgg16:
 
         # fc3
         with tf.name_scope('fc3') as scope:
-            fc3w = tf.Variable(tf.truncated_normal([4096, 1000],
+            fc3w = tf.Variable(tf.truncated_normal([4096, self.classes],
                                                    dtype=tf.float32,
                                                    stddev=1e-1), name='weights')
-            fc3b = tf.Variable(tf.constant(1.0, shape=[1000], dtype=tf.float32),
+            fc3b = tf.Variable(tf.constant(1.0, shape=[self.classes], dtype=tf.float32),
                                trainable=self.trainable, name='biases')
             self.fc3l = tf.nn.bias_add(tf.matmul(self.fc2, fc3w), fc3b)
             self.parameters += [fc3w, fc3b]
@@ -259,7 +264,7 @@ class Vgg16:
         self.layers = [self.conv1_1, self.conv1_2, self.conv2_1, self.conv2_2, self.conv3_1, self.conv3_2, self.conv3_3, self.conv4_1, self.conv4_2, self.conv4_3, self.conv5_1, self.conv5_2, self.conv5_3, self.fc1, self.fc2, self.fc3l]
         for i, k in enumerate(keys):
             if i == weights_to_load_hack:
-                break;
+                break
             print('-', i, k, np.shape(weights[k]))
             sess.run(self.parameters[i].assign(weights[k]))
 
