@@ -5,7 +5,7 @@ import xmlrpc.client
 from cache_file import CacheCollection, StopCache
 
 
-DEFAULT_QUEUE_CAPACITY = 1024
+DEFAULT_QUEUE_CAPACITY = 2048
 EMPTY_QUEUE_SLEEP = 0.1
 WHITE_BG = '\033[5;30;47m'
 GREEN_BG = '\033[0;30;42m'

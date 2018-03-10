@@ -5,6 +5,9 @@ import os
 import multiprocessing
 import random
 import numpy as np
+import threading
+import queue
+import time
 
 PADDING_SIZE = 64
 SAMPLES_TO_FLUSH = 20
@@ -79,7 +82,7 @@ class CacheCollection:
         # print('last!!', start_indices, index)
         return i, index - si
 
-    def random_iterator(self, batch_size, test=False):
+    def random_iterator(self, batch_size, test=False, verbose=False):
         total_records = 0
         start_indices = []
 
@@ -90,9 +93,52 @@ class CacheCollection:
         if test:
             fract = 0.15
         set_records = int(total_records * fract)
-        perm = np.random.permutation(set_records)
+        seed = int(time.time()*10e7) % (2**32-1)
+        prng = np.random.RandomState(seed)
+        perm = prng.permutation(set_records)
+        # print('seed:', seed)
+        # print('perm:', perm[:10])
         features = []
         labels = []
+        batches = queue.Queue()
+        head = 0
+        index = 0
+        if not test:
+            head = total_records - set_records
+        
+        def _get_next(index, batches):
+            features = []
+            labels = []
+            samples_read = 0
+            while index < len(perm) and len(features) < batch_size:
+                f, loc = self._get_indices_for_global_index(start_indices, head + perm[index])
+                c = self._caches[f]
+                # print('loc:', loc)
+                x, y = c._read_from_location(loc)
+                try:
+                    features.append(x.reshape((224, 224, 1)))
+                    labels.append(y)
+                except:
+                    if verbose:
+                        print('failed with x', x.shape)
+                index += 1
+                samples_read += 1
+            batches.put((samples_read, features, labels))
+
+        t = threading.Thread(target=_get_next, args=(index, batches))
+        t.start()
+        while index < len(perm):
+            t.join()
+            t = threading.Thread(target=_get_next, args=(index, batches))
+            t.start()
+            samples_read, f, l = batches.get()
+            index += samples_read
+            yield f, l
+        return
+
+            
+                
+
         for index in perm:
             head = 0
             if not test:
@@ -104,7 +150,8 @@ class CacheCollection:
                 features.append(x.reshape((224, 224, 1)))
                 labels.append(y)
             except:
-                print('failed with x', x.shape)
+                if verbose:
+                    print('failed with x', x.shape)
                 continue
             if len(features) >= batch_size:
                 yield np.array(features), np.array(labels)
@@ -412,6 +459,7 @@ class CacheFile:
     def _read_from_location(self, loc):
         with self._lock, self._open() as f:
             f.seek(self._header.size() + loc * self._header.sample_size)
+            # print('reading from:', f.tell())
             buff = f.read(self._header.sample_size)
             if not buff:
                 return None

@@ -1,13 +1,15 @@
+import random
 import multiprocessing
 import os
 import tensorflow as tf
 import numpy as np
 
 from myqueue import MyQueue
-from data import DataClass, DataType, NomixDS, MultiDatasets
+from data import DataClass, DataType, NomixDS, MultiDatasets, MixWithVocalResult, InstWithVocalResult
 
 from vgg16 import Vgg16
-from audio import get_image_with_audio, to_audiosegment, get_rand_audio_patch
+from audio import get_image_with_audio, to_audiosegment, get_rand_audio_patch, \
+                  get_rand_spect_patch, get_mel_filename, get_offset_range_patch
 
 from exceptions import NoThreadSlots
 
@@ -93,18 +95,23 @@ class DatasetStage(PipelineStage):
         super().__init__(config, context)
         self._ds = dataset
         self._vocls = None
-        self._instrumentals = None
+        self._insts = None
 
     def in_proc_init(self):
         self._vocls = self._ds.vocals()
-        self._instrumentals = self._ds.instrumentals()
+        self._insts = self._ds.instrumentals()
 
     def write(self, data):
         if not isinstance(data, int):
             raise RuntimeError('Expected an integer')
 
+        # print('[+] v = next(self._vocls)')
         v = next(self._vocls)
-        i = next(self._instrumentals)
+        if not isinstance(v, MixWithVocalResult):
+            i = next(self._insts)    
+            v = InstWithVocalResult(v, i)
+        # print('[+] i = next(self._insts)')
+        i = next(self._insts)
         self.output_queue.put(v)
         self.output_queue.put(i)
 
@@ -112,7 +119,6 @@ class DatasetStage(PipelineStage):
 class DualDatasetStage(DatasetStage):
     def __init__(self, config, context):
         super().__init__(config, context, SimpleDualDS(config['params']))
-
 
 
 class MultiDatasetsStage(DatasetStage):
@@ -143,6 +149,29 @@ class AudioJoinStage(PipelineStage):
         for vocl, inst in data:
             self.output_queue.put((vocl, 1))
             self.output_queue.put((inst, 0))
+
+
+class FilenameToSlice(PipelineStage):
+    def __init__(self, config, context):
+        super().__init__(config, context)
+        self._max_parallel = 6
+    
+    def write(self, data):
+        # print(data)
+        if isinstance(data, MixWithVocalResult):
+            self.output_queue.put((data.desc(), data._slice(), data.get_label()))
+            return
+        if isinstance(data, InstWithVocalResult):
+            self.output_queue.put((data.desc(), data.mix(), data.get_label()))
+            return
+        
+        params, label = data
+        filename, offset, _range = params
+
+        aud = get_offset_range_patch(filename, offset, _range)
+        desc = str(params)
+
+        self.output_queue.put((desc, aud, label))
 
 
 class FilenameToAudio(PipelineStage):
@@ -192,6 +221,7 @@ class PrinterStage(PipelineStage):
     def write(self, data):
         self.counter += 1
         print('[+] {}. PrinterStage: {}'.format(self.counter, str(data)[:40] + '...'))
+
 
 class PrintSummary(PipelineStage):
     def __init__(self, config, context):

@@ -8,6 +8,7 @@ import traceback
 import math
 import xmlrpc.client
 import pickle
+import gc
 
 from myqueue import EMPTY_QUEUE_SLEEP
 from exceptions import NoThreadSlots
@@ -77,7 +78,8 @@ def print_summary(start, stages):
     final_str.append(' t[{}/{}] '.format(total_occup_threads, multiprocessing.cpu_count() ))
     final_str.append(str(time_passed))
     # print('\r' + ''.join(final_str), end='')
-    print(''.join(final_str))
+    final_str.append('\n')
+    open('pipeline.log', 'ab').write(''.join(final_str).encode('utf-8'))
 
 
 def is_main_thread_alive():
@@ -139,6 +141,15 @@ def keepalive_worker(context, stages):
 
 # @keyboard_int_guard
 def write_thread_occup_guard(start_event, thread_sem, stage, cancel, profiler):        
+    def _write():
+        if profiler:
+            with profiler.record('{}.input_queue.get'.format(stage.name)):
+                item = stage.input_queue.get(True, STAGE_GET_TIMEOUT)
+            with profiler.record('{}.write'.format(stage.name)):
+                stage.write(item)
+        else:
+            item = stage.input_queue.get(True, STAGE_GET_TIMEOUT)
+            stage.write(item)
     free_slot = True
     try:
         thread_sem.acquire()
@@ -148,15 +159,14 @@ def write_thread_occup_guard(start_event, thread_sem, stage, cancel, profiler):
         if start_event:
             start_event.set()
         while True:
-            
-            if profiler:
-                with profiler.record('{}.input_queue.get'.format(stage.name)):
-                    item = stage.input_queue.get(True, STAGE_GET_TIMEOUT)
-                with profiler.record('{}.write'.format(stage.name)):
-                    stage.write(item)
-            else:
-                item = stage.input_queue.get(True, STAGE_GET_TIMEOUT)
-                stage.write(item)
+            try:
+                _write()
+            except queue.Full:
+                raise
+            except:
+                traceback.print_exc(file=open('errors.log', 'a'))
+
+            gc.collect()
             
             if cancel and not cancel.is_set():
                 continue
@@ -209,7 +219,8 @@ def no_fork_pipeline_stage_worker(init_barrier, thread_sem, stage, context):
         except KeyboardInterrupt:
             raise
         except Exception as e:
-            traceback.print_exc()
+            # traceback.print_exc()
+            traceback.print_exc(file=open('errors.log', 'a'))
 
 
 # @keyboard_int_guard
@@ -269,4 +280,4 @@ def pipeline_stage_worker(init_barrier, thread_sem, stage, context):
         except KeyboardInterrupt:
             raise
         except Exception as e:
-            traceback.print_exc()
+            traceback.print_exc(file=open('errors.log', 'a'))

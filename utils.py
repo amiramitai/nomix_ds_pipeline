@@ -3,10 +3,47 @@ import collections
 import queue as Queue
 import multiprocessing
 import os
+from smtplib import SMTP
+
+
+class MailNotifier(object):
+    def __init__(self, mail, password):
+        self.mail = mail
+        self.password = password
+
+
+    def send_notification(self, recipient, subject, body):
+        headers = [
+            "from: " + self.mail,
+            "subject: " + subject,
+            "to: " + recipient,
+            "mime-version: 1.0",
+            "content-type: text/html"
+        ]
+
+        headers = "\r\n".join(headers)
+        msg = headers + "\r\n\r\n" + body
+
+        session = SMTP("smtp.gmail.com", 587)
+        session.ehlo()
+        session.starttls()
+        session.login(self.mail, self.password)
+        session.sendmail(self.mail, recipient.split(";"), msg)    
+        session.quit()
+
+
+def send_mail(subject, body):
+    GMAIL_USER = "minizero@gmail.com"
+    GMAIL_PASS = "txcjsaklvtvfbdtb"
+    NOTIFICATION_RECIPIENT = "minizero@gmail.com"
+    mn = MailNotifier(GMAIL_USER, GMAIL_PASS)
+    mn.send_notification(NOTIFICATION_RECIPIENT, subject, body)
+    print('[+] Email sent!', subject)
 
 
 def iterate_audio_files(path):
     return iterate_files(path, ('.wav', '.aac', '.wav', '.ogg', '.wma', '.m4a'))
+
 
 def iterate_files(path, ext=''):
     for root, dirs, files in os.walk(path):

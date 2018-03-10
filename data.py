@@ -4,13 +4,18 @@ import itertools
 import pickle
 import os
 import re
+import traceback
 from collections import defaultdict
 
 
 from utils import iterate_files, iterate_audio_files
 
-from audio import get_net_duration
+from audio import get_net_duration, get_number_of_frames, get_offset_range_patch
+from audio import get_spect_range_from_time_range, choose_spect_range
 from audio import MELS, HOP_LENGTH, SAMPLE_RATE, RMS_SILENCE_THRESHOLD, SILENCE_HOP_THRESHOLD
+from audio import SAMPLE_MIN_LENGTH
+
+from collections import defaultdict
 
 
 class DataClass:
@@ -24,15 +29,99 @@ class DataType:
     EMBED = 2
 
 
+class DatasetResult:
+    pass
+
+class InstWithVocalResult(DatasetResult):
+    def __init__(self, vocal_res, inst_res):
+        self.voc = vocal_res
+        self.inst = inst_res
+
+    def mix(self):
+        params, _ = self.inst
+        filename, offset, _range = params
+        vaud = get_offset_range_patch(filename, offset, _range)
+        params, _ = self.voc
+        filename, offset, _range = params
+        iaud = get_offset_range_patch(filename, offset, _range)
+        return (vaud + iaud) / 2.0
+
+    def desc(self):
+        return 'voc:' + str(self.voc[0]) + '+ inst:' + str(self.inst[0])
+
+    def get_label(self):
+        return self.voc[1]
+
+
+class MixWithVocalResult(DatasetResult):
+    def __init__(self, vocal_res, mix_filename):
+        self.voc = vocal_res
+        self.mix = mix_filename
+
+    def _slice(self):
+        params, _ = self.voc
+        filename, offset, _range = params
+        ret = get_offset_range_patch(filename, offset, _range, self.mix)
+        return ret
+
+    def desc(self):
+        return 'voc:' + str(self.voc[0]) + '+ mix:' + self.mix
+        
+
+    def get_label(self):
+        return self.voc[1]
+
+
+class JustVocalResult(DatasetResult):
+    def __init__(self, filename, offset, _range=None):
+        self.filename = filename
+        self.offset = offset
+        self._range = _range
+
+
+class JustInstResult(DatasetResult):
+    def __init__(self, filename, offset, _range=None):
+        self.filename = filename
+        self.offset = offset
+        self._range = _range
+
+
+class Dataset:
+    def __init__(self):
+        self.ranges = defaultdict(int)
+        self.file_ranges = defaultdict(list)
+
+    def add_frames_num(self, name, filename):
+        frames = get_number_of_frames(filename)
+        self.ranges[name] += frames
+        self.file_ranges[name].append((frames, filename))
+
+    def get_frames_num(self, name):
+        return self.ranges.get(name, 0)
+
+    def get_with_perm(self, label_name, offset):
+        for frame_num, filename in self.file_ranges[label_name]:
+            if offset <= frame_num:
+                return filename, offset, None
+            
+            offset -= frame_num
+
+    def get_mixture_with_vocal(self, filename):
+        return None
+
+
 class LineDelimFileDataset:
-    def __init__(self, filename, base_dir):
+    def __init__(self, filename, base_dir, file_cb):
+        super().__init__()
         print('[+] caching dataset from file', filename)
         self.filename = filename
         self.line_coords = []
         self.base_dir = base_dir
         offset = 0
-        with open(filename, 'rb') as f:
+        with open(filename, 'r') as f:
             for line in f:
+                fullpath = os.path.join(self.base_dir, line.strip())
+                file_cb(fullpath)
                 self.line_coords.append((offset, len(line)))
                 offset += len(line)
 
@@ -80,70 +169,47 @@ class LineDelimFileDataset:
         return len(self.line_coords)
 
 
-class NomixDS:
+class NomixDS(Dataset):
     def __init__(self, params):
+        super().__init__()
         # if not params:
         #     params = {}
         vocl_fn = params.get('vocl_filename', 'ds_vocls')
         inst_fn = params.get('inst_filename', 'ds_inst')
         base_dir = params.get('base_dir')
-        self.voclds = LineDelimFileDataset(vocl_fn, base_dir)
-        self.instds = LineDelimFileDataset(inst_fn, base_dir)
+        
+        self.voclds = LineDelimFileDataset(vocl_fn, base_dir, self._add_vocals)
+        # self.ranges['vcl'] = self.voclds.get_frames_num('any')
+        self.instds = LineDelimFileDataset(inst_fn, base_dir, self._add_instrumentals)
+        # self.ranges['inst'] = self.instds.get_frames_num('any')
+
+    def _add_vocals(self, filename):
+        self.add_frames_num('vocl', filename)
+    
+    def _add_instrumentals(self, filename):
+        self.add_frames_num('inst', filename)
 
     def vocals(self):
-        while True:
-            samples = self.voclds.samples()
-            for sample in samples:
-                yield sample
+        samples = self.voclds.samples()
+        for sample in samples:
+            yield sample
 
             
 
     def instrumentals(self):
-        while True:
-            samples = self.instds.samples()
-            for sample in samples:
-                yield sample
-    
+        samples = self.instds.samples()
+        for sample in samples:
+            yield sample
 
 
-class DatasetCollection:
-    def __init__(self, datasets):
-        self._datasets = []
-        for ds in datasets:
-            if isinstance(ds, dict):
-                ds = Dataset(ds)
-            elif not isinstance(ds, Dataset):
-                raise RuntimeError('Expected a Dataset', ds)
-            self._datasets.append(ds)
-
-    def filter_dataset_type(self, dtype):
-        ret = [d for d in self._datasets if d.get_type() == dtype]
-        return DatasetCollection(ret)
-
-    def filter_dataset_class(self, _class):
-        ret = [d for d in self._datasets if d.get_class() == _class]
-        return DatasetCollection(ret)
-
-    def get_types(self, dtype):
-        return list(set([ds.get_type() for ds in self._datasets]))
-
-    def get_classes(self, dtype):
-        return list(set([ds.get_classes() for ds in self._datasets]))
-
-
-class DataSource:
-    def __init__(self):
-        raise NotImplementedError()
-
-
-class DSD100:
+class DSD100(Dataset):
     def __init__(self, params):
+        super().__init__()
         self.samples = defaultdict(lambda: {'mix': None, 'vocl': None, 'inst': []})
         path = params['path']
 
         self.number_if_samples = 0
         for a in iterate_files(os.path.join(path, 'Mixtures'), '.wav'):
-            print(a)
             key = os.path.basename(os.path.dirname(a))
             self.samples[key]['mix'] = a
             self.number_if_samples += 1
@@ -153,19 +219,33 @@ class DSD100:
             key = os.path.basename(os.path.dirname(a))
             if a.endswith('vocals.wav'):
                 self.samples[key]['vocl'] = a
+                self.add_frames_num('vocl', a)
             else:
                 self.samples[key]['inst'].append(a)
+                self.add_frames_num('inst', a)
             self.number_if_samples += 1
 
         self.samples = dict(self.samples)
 
 
-    def mixtures(self):
-        items = list(self.samples.values())
-        random.shuffle(items)
-        for item in items:
-            if item['mix'] and item['vocl']:
-                yield item['mix'], item['vocl']
+    # def mixtures(self):
+    #     items = list(self.samples.values())
+    #     random.shuffle(items)
+    #     for item in items:
+    #         if item['mix'] and item['vocl']:
+    #             yield item['mix'], item['vocl']
+
+    def get_mixture_with_vocal(self, filename):
+        key = os.path.basename(os.path.dirname(filename))
+        if key not in self.samples:
+            print('[+] DSD100::get_mixture_with_vocal:: key was not found in samples', key)
+            return None
+        val = self.samples[key]
+        if 'mix' not in val:
+            print('[+] DSD100::get_mixture_with_vocal:: mix was not found in val', val.keys())
+            return None
+
+        return val['mix']
     
     def vocals(self):
         items = list(self.samples.values())
@@ -180,12 +260,11 @@ class DSD100:
         for item in items:
             for inst in item['inst']:
                 yield inst
-    
 
 
-
-class CCMixter:
+class CCMixter(Dataset):
     def __init__(self, params):
+        super().__init__()
         self.samples = defaultdict(lambda: {'mix': None, 'vocl': None, 'inst': None})
         path = params['path']
 
@@ -195,16 +274,30 @@ class CCMixter:
                 self.samples[key]['mix'] = a
             elif a.endswith('source-01.wav'):
                 self.samples[key]['inst'] = a
+                self.add_frames_num('inst', a)
             else:
                 self.samples[key]['vocl'] = a
+                self.add_frames_num('vocl', a)
         self.samples = dict(self.samples)
 
-    def mixtures(self):
-        items = list(self.samples.values())
-        random.shuffle(items)
-        for item in items:
-            if item['mix']:
-                yield item['mix']
+    # def mixtures(self):
+    #     items = list(self.samples.values())
+    #     random.shuffle(items)
+    #     for item in items:
+    #         if item['mix']:
+    #             yield item['mix']
+
+    def get_mixture_with_vocal(self, filename):
+        key = os.path.basename(os.path.dirname(filename))
+        if key not in self.samples:
+            print('[+] CCMixter::get_mixture_with_vocal:: key was not found in samples', key)
+            return None
+        val = self.samples[key]
+        if 'mix' not in val:
+            print('[+] CCMixter::get_mixture_with_vocal:: mix was not found in val', val.keys())
+            return None
+
+        return val['mix']
     
     def vocals(self):
         keys = list(self.samples.keys())
@@ -222,8 +315,10 @@ class CCMixter:
             if item['inst']:
                 yield item['inst']
 
-class Irmas:
+
+class Irmas(Dataset):
     def __init__(self, params):
+        super().__init__()
         path = params['path']
         self.vocl = []
         self.inst = []
@@ -233,14 +328,18 @@ class Irmas:
                 txt_filename = a[:-4] + '.txt'
                 if 'voi' in map(str.strip, open(txt_filename)):
                     self.vocl.append(a)
+                    self.add_frames_num('vocl', a)
                 else:
                     self.inst.append(a)
+                    self.add_frames_num('inst', a)
             except FileNotFoundError:
                 if 'voi' in reg.findall(a):
                     self.vocl.append(a)
+                    self.add_frames_num('vocl', a)
                 else:
                     self.inst.append(a)
-
+                    self.add_frames_num('inst', a)
+    
     def vocals(self):
         items = self.vocl[:]
         random.shuffle(items)
@@ -254,25 +353,54 @@ class Irmas:
             yield item
         
 
-class JamAudio:
+class JamAudio(Dataset):
     def __init__(self, params):
+        super().__init__()
         self.path = params['path']
         self.samples = defaultdict(lambda: {'sing': [], 'nosing': []})
 
         for a in iterate_audio_files(self.path):
-            print(a)
             key = os.path.basename(a)
+            vocl_frames = 0
+            inst_frames = 0
             for line in map(str.strip, open(a[:-4] + '.lab')):
                 frm, to, label = line.split()
-                self.samples[key][label].append((float(frm), float(to)))
+                spect_range = get_spect_range_from_time_range((float(frm), float(to)))
+                self.samples[key][label].append(spect_range)
+                start, end = spect_range
+                
+                if end - start < SAMPLE_MIN_LENGTH:
+                    continue
+                
+                frames = (end - start) - SAMPLE_MIN_LENGTH + 1
+                if label == 'sing':
+                    vocl_frames += frames
+                elif label == 'nosing':
+                    inst_frames += frames
+                else:
+                    print('[!] unknown key:', key)
 
-            self.samples[key]
+            if vocl_frames > 0:
+                self.ranges['vocl'] += vocl_frames
+                self.file_ranges['vocl'].append((vocl_frames, a))
+            
+            if inst_frames > 0:
+                self.ranges['inst'] += inst_frames
+                self.file_ranges['inst'].append((inst_frames, a))
 
         self.samples = dict(self.samples)
 
-    def mixtures(self):
-        return
-        yield
+    def get_with_perm(self, label_name, offset):
+        klabel = 'nosing'
+        if label_name == 'vocl':
+            klabel = 'sing'
+
+        for frame_num, filename in self.file_ranges[label_name]:
+            if offset <= frame_num:
+                key = os.path.basename(filename)
+                return filename, offset, self.samples[key][klabel]
+
+            offset -= frame_num
 
     def vocals(self):
         keys = list(self.samples.keys())
@@ -281,7 +409,7 @@ class JamAudio:
             item = self.samples[key]
             filepath = os.path.join(self.path, key)
             if item['sing']:
-                yield filepath, random.choice(item['sing'])
+                yield filepath, choose_spect_range(item['sing'])
 
     def instrumentals(self):
         keys = list(self.samples.keys())
@@ -290,11 +418,12 @@ class JamAudio:
             item = self.samples[key]
             filepath = os.path.join(self.path, key)
             if item['nosing']:
-                yield filepath, random.choice(item['nosing'])
+                yield filepath, choose_spect_range(item['nosing'])
 
 
-class Musdb18:
+class Musdb18(Dataset):
     def __init__(self, params):
+        super().__init__()
         self.samples = defaultdict(lambda: {'mix': None, 'vocl': None, 'inst': []})
         path = params['path']
 
@@ -302,19 +431,33 @@ class Musdb18:
             key = os.path.basename(a)[:-6]
             if a.endswith('_4.wav'):
                 self.samples[key]['vocl'] = a
+                self.add_frames_num('vocl', a)
             elif a.endswith('_0.wav'):
                 self.samples[key]['mix'] = a
             else:
                 self.samples[key]['inst'].append(a)
+                self.add_frames_num('inst', a)
 
         self.samples = dict(self.samples)
 
-    def mixtures(self):
-        items = list(self.samples.values())
-        random.shuffle(items)
-        for item in items:
-            if item['mix'] and item['vocl']:
-                yield item['mix'], item['vocl']
+    # def mixtures(self):
+    #     items = list(self.samples.values())
+    #     random.shuffle(items)
+    #     for item in items:
+    #         if item['mix'] and item['vocl']:
+    #             yield item['mix'], item['vocl']
+
+    def get_mixture_with_vocal(self, filename):
+        key = os.path.basename(filename)[:-6]
+        if key not in self.samples:
+            print('[+] Musdb18::get_mixture_with_vocal:: key was not found in samples', key)
+            return None
+        val = self.samples[key]
+        if 'mix' not in val:
+            print('[+] Musdb18::get_mixture_with_vocal:: mix was not found in val', val.keys())
+            return None
+
+        return val['mix']
     
     def vocals(self):
         keys = list(self.samples.keys())
@@ -333,29 +476,43 @@ class Musdb18:
                 yield inst
 
 
-class Quasi:
+class Quasi(Dataset):
     VOCAL_KEYWORDS = ['choir', 'speech', 'lv_', 'harmo', 'vox', 'voix', 'voic', 'voc']
     
     def __init__(self, params):
+        super().__init__()
         self.samples = defaultdict(lambda: {'mix': [], 'vocl': [], 'inst': []})
         path = params['path']
         self.net_vocals = 0
         self.net_insts = 0
         for a in iterate_files(os.path.join(path, 'separation'), '.wav'):
-            print(a)
             key = os.path.basename(os.path.dirname(os.path.dirname(a))).lower()
             filename = os.path.basename(a).lower()
             if self._is_vocal_name(filename):
                 self.samples[key]['vocl'].append(a)
-                self.net_insts += get_net_duration(a)
+                # self.net_vocls += get_net_duration(a)
+                self.add_frames_num('vocl', a)
                 continue
             if 'mix' in filename:
                 self.samples[key]['mix'].append(a)
                 continue
 
             self.samples[key]['inst'].append(a)
-            self.net_insts += get_net_duration(a)
+            self.add_frames_num('inst', a)
+            # self.net_insts += get_net_duration(a)
         self.samples = dict(self.samples)
+
+    def get_mixture_with_vocal(self, filename):
+        key = os.path.basename(os.path.dirname(os.path.dirname(filename))).lower()
+        if key not in self.samples:
+            print('[+] Quasi::get_mixture_with_vocal:: key was not found in samples', key)
+            return None
+        val = self.samples[key]
+        if 'mix' not in val:
+            print('[+] Quasi::get_mixture_with_vocal:: mix was not found in val', val.keys())
+            return None
+
+        return val['mix']
 
     def vocals(self):
         keys = list(self.samples.keys())
@@ -391,6 +548,8 @@ class MultiDatasets:
         print('[+] MultiDatasets::__init__:', params)
         self.datasets = []
         self.params = []
+        self.vocl_frames = 0
+        self.inst_frames = 0
         for ds_config in params:
             self._load_dataset_with_config(ds_config)
         print('[+] {} datasets were loaded'.format(len(self.datasets)))
@@ -400,48 +559,93 @@ class MultiDatasets:
         cache = config.get('cache')
         if cache and os.path.isfile(cache):
             print('[+] getting from cache!', cache)
-            self.datasets.append(pickle.load(open(cache, 'rb')))
+            ds = pickle.load(open(cache, 'rb'))
+            self.datasets.append(ds)
+            self.vocl_frames += ds.get_frames_num('vocl')
+            self.inst_frames += ds.get_frames_num('inst')
             return
         
         _cls = globals()[config['type']]
-        inst = _cls(config['params'])
-        self.datasets.append(inst)
+        ds = _cls(config['params'])
+        self.datasets.append(ds)
+        self.vocl_frames += ds.get_frames_num('vocl')
+        self.inst_frames += ds.get_frames_num('inst')
 
         if cache:
-            pickle.dump(inst, open(cache, 'wb'))
+            pickle.dump(ds, open(cache, 'wb'))
 
     def vocals(self):
-        return self._iterate_iterators(self._get_all_vocals_iterators, label=[0, 1])
+        return self._iterate_iterators(self.vocl_frames, label_name='vocl')
     
     def instrumentals(self):
-        return self._iterate_iterators(self._get_all_instrumental_iterators, label=[1, 0])
+        return self._iterate_iterators(self.inst_frames, label_name='inst')
 
-    def _get_all_vocals_iterators(self):
-        return [d.vocals() for d in self.datasets]
-    
-    def _get_all_instrumental_iterators(self):
-        return [d.instrumentals() for d in self.datasets]
-
-    def _iterate_iterators(self, iter_func, label):
+    def _iterate_iterators(self, perm_size, label_name):        
         while True:
-            iters = iter_func()
-            while iters:
-                random.shuffle(iters)
-                ended = []
+            print('[+] generating permutations:', perm_size, label_name)
+            # perm = np.random.permutation(perm_size)
+            # perm = range(perm_size)
+            print('[+] permutations generated:', perm_size, label_name)
+            # for offset in perm:
+            while True:
+                try:
+                    # print('[+] next', label_name)
+                    offset = random.randint(0, perm_size-1)
+                    # open('offsets.log', 'a').write(str(offset) + '\n')
+                    # print('[+] offset', offset, label_name)
+                    for ds in self.datasets:
+                        # print('[+] offset', offset, label_name)
+                        # print('[+] ds', ds, label_name)
+                        cur_frames = ds.get_frames_num(label_name)
+                        # print('[+] cur_frames', cur_frames, label_name)
+                        if offset <= cur_frames:
+                            # print('[+] in!', label_name)
+                            if label_name == 'inst':
+                                # print('[+] inst!')
+                                ret = (ds.get_with_perm(label_name, offset), [1, 0])
+                            else:
+                                # print('[+] voc!')
+                                ret = (ds.get_with_perm(label_name, offset), [0, 1])
+                                params, label = ret
+                                filename, offset, _range = params
+                                mix = ds.get_mixture_with_vocal(filename)
+                                if mix:
+                                    # print('[+] hasmix!')
+                                    ret = MixWithVocalResult(ret, mix)
+                            # print('[+] yielding', label_name, ret)
+                            yield ret
+                            break
+                        # print('[+] continue to next!', label_name)
+                        
+                        offset -= cur_frames
+                    # print('[+] out of loop!', label_name)
+                except:
+                    traceback.print_exc()
+                    raise
+                # print('[+] going for next one', label_name)
+            # print('[+] finished perms for:', label_name)
+    # def _iterate_iterators(self, iter_func, label):
+    #     while True:
+    #         iters = iter_func()
+    #         while iters:
+    #             random.shuffle(iters)
+    #             ended = []
+    #             # print('[+] iterators:', iters)
                 
-                for i, iterator in enumerate(iters):
-                    try:
-                        x = next(iterator)
-                        # print('[+] iterating', x, label)
-                        yield x, label
-                    except StopIteration:
-                        ended.append(i)
+    #             for i, iterator in enumerate(iters):
+    #                 try:
+    #                     # print('[+] iterating', i, iterator)
+    #                     x = next(iterator)
+    #                     # print('[+] iterating', x, label)
+    #                     yield x, label
+    #                 except StopIteration:
+    #                     ended.append(i)
                 
-                for i in reversed(sorted(ended)):
-                    del iters[i]
-                    # print('[+] iterator has finished for', i, label)
+    #             for i in reversed(sorted(ended)):
+    #                 del iters[i]
+    #                 print('[+] iterator has finished for', i, label)
             
-            # print('[+] finished all iterators')
+    #         print('[+] finished all iterators')
                 
 
 if __name__ == '__main__':

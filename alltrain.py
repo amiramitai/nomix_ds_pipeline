@@ -49,7 +49,7 @@ accuracy_print_steps = 100
 model_version = 1
 model_path = 'models/model-{}/'.format(model_version)
 batch_size = 40
-learning_rate = 0.00001
+learning_rate = 0.0000001
 num_hidden_layers = 2
 hidden_layer_size = 512
 keep_prob = 1.0
@@ -67,7 +67,7 @@ def train():
                 _is_training = tf.placeholder(tf.bool, name='is_training')
                 _keep_prob = tf.placeholder(tf.float32, name='keep_probability')
             # imgs = tf.placeholder(tf.float32, [None, 224, 224, 1])
-            model = vgg16.Vgg16(_images, '../vgg16_weights.npz', classes=2, mean=[0.343388929118], trainable=True)
+            model = vgg16.Vgg16(_images, '../vgg16_weights.npz', classes=2, mean=[0.343388929118], trainable=training)
 
             with tf.name_scope("targets"):
                 _labels = tf.placeholder(tf.float32, shape=(None, 2), name='labels')
@@ -88,16 +88,22 @@ def train():
                 tf.summary.histogram("predictions", predictions)
 
             with tf.name_scope("cost"):
-                cross_entropy = tf.nn.softmax_cross_entropy_with_logits(logits=logits, labels=_labels, name='cross_entropy')
+                cross_entropy = tf.nn.softmax_cross_entropy_with_logits_v2(logits=logits, labels=_labels, name='cross_entropy')
                 cost = tf.reduce_mean(cross_entropy, name='cost')
 
                 tf.summary.scalar("cost", cost)
 
             with tf.name_scope("train"):
-                with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):                
+                with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):         
+                    starter_learning_rate = learning_rate
+                    # global_step = tf.Variable(0, trainable=False)
+                    # learning_rate = tf.train.exponential_decay(starter_learning_rate, global_step,
+                    #                                         100000, 0.96, staircase=True)       
                     optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(cost)
                     correct_predictions = tf.equal(tf.argmax(predictions, 1), tf.argmax(_labels, 1), name='correct_predictions')
                     accuracy = tf.reduce_mean(tf.cast(correct_predictions, tf.float32), name='accuracy')
+
+                    tf.summary.scalar("accuracy", accuracy)
 
             merged_summaries = tf.summary.merge_all()
             sess.run(tf.global_variables_initializer())
@@ -117,11 +123,19 @@ def train():
                 state = json.load(open(startup['path'], 'r'))
                 print('[+] loading checkpoint:', state['checkpoint_path'])
                 saver.restore(sess, tf.train.latest_checkpoint(os.path.dirname(state['checkpoint_path'])))
-                iteration = state['iteration']
+                # iteration = state['iteration']
+                # best_acc = state['best_acc']
+                # best_loss = state['best_loss']
                 best_acc = state['best_acc']
+                if 'val_acc' in state:
+                    best_acc = state['val_acc']
+
                 best_loss = state['best_loss']
+                if 'train_loss' in state:
+                    best_loss = state['train_loss']
+                
                 checkpoint_path = state['checkpoint_path']
-                log_string = state['log_string']
+                # log_string = 'next-' + state['log_string']
             except:
                 print('[!] no models to checkpoint from..')
             writer = tf.summary.FileWriter(log_string)
@@ -150,7 +164,7 @@ def train():
             cc = cache_file.CacheCollection({'filename': 'T:\\cache\\AudioToImage', 'seek_policy': 'ONE_SHOT', 'max_size': 2147483648, 'max_split': 50})
             while True:
                 train = cc.random_iterator(batch_size, test=False)
-                test = cc.random_iterator(batch_size, test=True)
+                test = cc.random_iterator(batch_size*2, test=True)
                 # train_dataset.shuffle()
                 # test_dataset.shuffle()
                 # test_batches = test_dataset.get_batches(batch_size)
@@ -183,6 +197,7 @@ def train():
 
 
                         print('\tIteration {} Accuracy: {} Loss: {}'.format(iteration, val_acc, train_loss))
+                        print('\t\t Best Accuracy: {} Best Loss: {}'.format(iteration, best_acc, best_loss))
                         if val_acc >= best_acc or train_loss <= best_loss:
                             if train_loss <= best_loss:
                                 best_loss = train_loss
@@ -196,6 +211,8 @@ def train():
                                 'iteration': iteration,
                                 'best_acc': float(best_acc),
                                 'best_loss': float(best_loss),
+                                'val_acc': float(val_acc),
+                                'train_loss': float(train_loss),
                                 'checkpoint_path': checkpoint_path,
                                 'log_string': log_string,
                             }

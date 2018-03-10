@@ -204,6 +204,9 @@ if __name__ == '__main__':
         with open(yaml_path) as f:
             config = yaml.safe_load(f)
         amp = Pipeline(config['pipeline'])
+        import pdb
+        pdb.set_trace()
+        sdfsdf
         amp.run()
         amp.keepalive(block=True)
     except KeyboardInterrupt:
