@@ -105,7 +105,7 @@ def train(tip, iters=None, learning_rate=0.001, batch_norm=False):
         # please do not use the totality of the GPU memory
         # config.gpu_options.per_process_gpu_memory_fraction = 0.90
         # config.gpu_options.allow_growth = True
-        config = tf.ConfigProto(device_count = {'GPU': 0})
+        config = tf.ConfigProto(device_count={'GPU': 0})
         with tf.Session(graph=tf.Graph(), config=config) as sess:
             with tf.name_scope("inputs"):
                 # _images = tf.placeholder(tf.float32, shape=(None, 4096), name='images')
@@ -154,7 +154,8 @@ def train(tip, iters=None, learning_rate=0.001, batch_norm=False):
                                                               time_str,
                                                               learning_rate)
             saver = tf.train.Saver(tf.global_variables(), max_to_keep=None)
-            last_checkpoint = "D:\\checkpoint\\2018-03-20_232627"
+            # last_checkpoint = "D:\\checkpoint\\2018-03-20_232627"
+            last_checkpoint = '/Users/amiramitai/Projects/nomix/2018-03-20_165832/'
             saver.restore(sess, tf.train.latest_checkpoint(last_checkpoint))
             
 
@@ -230,8 +231,8 @@ if __name__ == '__main__':
     from pipeline import Pipeline
     import yaml
     import matplotlib.pyplot as plt
-    with open('configs/win_client.2.yaml') as f:
-        config = yaml.safe_load(f)
+    # with open('configs/win_client.2.yaml') as f:
+    #     config = yaml.safe_load(f)
     # amp = Pipeline(config['pipeline'])
     # amp.run()
     # amp.keepalive(block=False)
