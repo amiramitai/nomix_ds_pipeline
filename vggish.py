@@ -58,25 +58,19 @@ def put_kernels_on_grid (kernel, grid_Y, grid_X, pad = 1):
 
     # put NumKernels to the 1st dimension
     x2 = tf.transpose(x1, (3, 0, 1, 2))
-    print("x2:", x2)
     # organize grid on Y axis
     x3 = tf.reshape(x2, tf.stack([grid_X, Y * grid_Y, X, channels])) #3
-    print("x3:", x3)
     # switch X and Y axes
     x4 = tf.transpose(x3, (0, 2, 1, 3))
-    print("x4:", x4)
     # organize grid on X axis
     x5 = tf.reshape(x4, tf.stack([1, X * grid_X, Y * grid_Y, channels])) #3
-    print("x5:", x5)
 
     # back to normal order (not combining with the next step for clarity)
     x6 = tf.transpose(x5, (2, 1, 3, 0))
-    print("x6:", x6)
 
     # to tf.image_summary order [batch_size, height, width, channels],
     #   where in this case batch_size == 1
     x7 = tf.transpose(x6, (3, 0, 1, 2))
-    print("x7:", x7)
 
     # scale to [0, 255] and convert to uint8
     # return tf.image.convert_image_dtype(x7, dtype = tf.uint8) 
@@ -84,15 +78,19 @@ def put_kernels_on_grid (kernel, grid_Y, grid_X, pad = 1):
 
 
 class Vggish:
-    def __init__(self, imgs, mean=None, classes=1000, sess=None, trainable=False, batch_norm=False, dropout=None):
+    def __init__(self, imgs, mean=None, classes=1000, sess=None, trainable=False,
+                 batch_norm=False, dropout=None, only_dense=False, dense_size=1024, bn_trainable=False):
         self.batch_norm = batch_norm
         self.dropout = dropout
         self.classes = classes
+        self.only_dense = only_dense
         self.mean = mean
         self.imgs = imgs
         self.trainable = trainable
+        self.bn_trainable = bn_trainable
         self.parameters = []
         self.summaries = []
+        self.dense_size = dense_size
         self.heavy_summaries = []
         # self.probs = tf.nn.softmax(self.fc3l)
         # self.weight_init_type = "msra"
@@ -137,6 +135,9 @@ class Vggish:
 
     def convlayers(self):
         init_stddev = 0.1
+        trainable = self.trainable
+        if self.only_dense:
+            trainable = False
         # zero-mean input
         with tf.name_scope('preprocess') as scope:
             # mean = tf.constant(self.mean, dtype=tf.float32, shape=[1, 1, 1, len(self.mean)], name='img_mean')
@@ -150,17 +151,18 @@ class Vggish:
         with tf.name_scope('conv1_1') as scope:
             # stddev = np.sqrt(2 / np.prod(images.get_shape().as_list()[1:]))
             stddev = 1e-01
-            kernel = tf.Variable(self.init_weight([3, 3, 1, 64], stddev=stddev), name='weights')
+            kernel = tf.Variable(self.init_weight([3, 3, 1, 64], stddev=stddev),
+                                 trainable=trainable, name='weights')
             self.add_variable_summaries(kernel)
             self.add_weights_summary(kernel, [3, 3, 1, 64])
             conv = tf.nn.conv2d(images, kernel, [1, 1, 1, 1], padding='SAME')
             biases = tf.Variable(tf.constant(0.0, shape=[64], dtype=tf.float32),
-                                 trainable=self.trainable, name='biases')
+                                 trainable=trainable, name='biases')
             # biases = tf.Variable(reader.get_tensor("vggish/conv1/biases"), dtype=tf.float32, name='biases', trainable=False)
             out = tf.nn.bias_add(conv, biases)
             out = tf.nn.relu(out, name=scope)
             if self.batch_norm:
-                out = tf.contrib.layers.batch_norm(out)
+                out = tf.contrib.layers.batch_norm(out, trainable=self.bn_trainable)
             self.conv1_1 = out
             self.parameters += [kernel, biases]
 
@@ -175,15 +177,16 @@ class Vggish:
         with tf.name_scope('conv2_1') as scope:
             # stddev = np.sqrt(2 / np.prod(self.pool1.get_shape().as_list()[1:]))
             stddev = 1e-01
-            kernel = tf.Variable(self.init_weight([3, 3, 64, 128], stddev=stddev), name='weights')
+            kernel = tf.Variable(self.init_weight([3, 3, 64, 128], stddev=stddev),
+                                 trainable=trainable, name='weights')
             self.add_variable_summaries(kernel)
             conv = tf.nn.conv2d(self.pool1, kernel, [1, 1, 1, 1], padding='SAME')
             biases = tf.Variable(tf.constant(0.0, shape=[128], dtype=tf.float32),
-                                 trainable=self.trainable, name='biases')
+                                 trainable=trainable, name='biases')
             out = tf.nn.bias_add(conv, biases)
             out = tf.nn.relu(out, name=scope)
             if self.batch_norm:
-                out = tf.contrib.layers.batch_norm(out)
+                out = tf.contrib.layers.batch_norm(out, trainable=self.bn_trainable)
             self.conv2_1 = out
             self.parameters += [kernel, biases]
 
@@ -194,19 +197,23 @@ class Vggish:
                                padding='SAME',
                                name='pool2')
 
+        if self.dropout:
+            self.pool2 = tf.nn.dropout(self.pool2, 0.3)
+
         # conv3_1
         with tf.name_scope('conv3_1') as scope:
             # stddev = np.sqrt(2 / np.prod(self.pool2.get_shape().as_list()[1:]))
             stddev = 1e-01
-            kernel = tf.Variable(self.init_weight([3, 3, 128, 256], stddev=stddev), name='weights')
+            kernel = tf.Variable(self.init_weight([3, 3, 128, 256], stddev=stddev),
+                                 trainable=trainable, name='weights')
             self.add_variable_summaries(kernel)
             conv = tf.nn.conv2d(self.pool2, kernel, [1, 1, 1, 1], padding='SAME')
             biases = tf.Variable(tf.constant(0.0, shape=[256], dtype=tf.float32),
-                                 trainable=self.trainable, name='biases')
+                                 trainable=trainable, name='biases')
             out = tf.nn.bias_add(conv, biases)
             out = tf.nn.relu(out, name=scope)
             if self.batch_norm:
-                out = tf.contrib.layers.batch_norm(out)
+                out = tf.contrib.layers.batch_norm(out, trainable=self.bn_trainable)
             self.conv3_1 = out
             self.parameters += [kernel, biases]
 
@@ -214,15 +221,16 @@ class Vggish:
         with tf.name_scope('conv3_2') as scope:
             # stddev = np.sqrt(2 / np.prod(self.conv3_1.get_shape().as_list()[1:]))
             stddev = 1e-01
-            kernel = tf.Variable(self.init_weight([3, 3, 256, 256], stddev=stddev), name='weights')
+            kernel = tf.Variable(self.init_weight([3, 3, 256, 256], stddev=stddev),
+                                 trainable=trainable, name='weights')
             self.add_variable_summaries(kernel)
             conv = tf.nn.conv2d(self.conv3_1, kernel, [1, 1, 1, 1], padding='SAME')
             biases = tf.Variable(tf.constant(0.0, shape=[256], dtype=tf.float32),
-                                 trainable=self.trainable, name='biases')
+                                 trainable=trainable, name='biases')
             out = tf.nn.bias_add(conv, biases)
             out = tf.nn.relu(out, name=scope)
             if self.batch_norm:
-                out = tf.contrib.layers.batch_norm(out)
+                out = tf.contrib.layers.batch_norm(out, trainable=self.bn_trainable)
             self.conv3_2 = out
             self.parameters += [kernel, biases]
 
@@ -233,19 +241,23 @@ class Vggish:
                                     padding='SAME',
                                     name='pool3')
 
+        if self.dropout:
+            self.pool3 = tf.nn.dropout(self.pool3, 0.3)
+
         # conv4_1
         with tf.name_scope('conv4_1') as scope:
             # stddev = np.sqrt(2 / np.prod(self.pool3.get_shape().as_list()[1:]))
             stddev = 1e-01
-            kernel = tf.Variable(self.init_weight([3, 3, 256, 512], stddev=stddev), name='weights')
+            kernel = tf.Variable(self.init_weight([3, 3, 256, 512], stddev=stddev),
+                                 trainable=trainable, name='weights')
             self.add_variable_summaries(kernel)
             conv = tf.nn.conv2d(self.pool3, kernel, [1, 1, 1, 1], padding='SAME')
             biases = tf.Variable(tf.constant(0.0, shape=[512], dtype=tf.float32),
-                                 trainable=self.trainable, name='biases')
+                                 trainable=trainable, name='biases')
             out = tf.nn.bias_add(conv, biases)
             out = tf.nn.relu(out, name=scope)
             if self.batch_norm:
-                out = tf.contrib.layers.batch_norm(out)
+                out = tf.contrib.layers.batch_norm(out, trainable=self.bn_trainable)
             self.conv4_1 = out
             self.parameters += [kernel, biases]
 
@@ -253,15 +265,16 @@ class Vggish:
         with tf.name_scope('conv4_2') as scope:
             # stddev = np.sqrt(2 / np.prod(self.conv4_1.get_shape().as_list()[1:]))
             stddev = 1e-01
-            kernel = tf.Variable(self.init_weight([3, 3, 512, 512], stddev=stddev), name='weights')
+            kernel = tf.Variable(self.init_weight([3, 3, 512, 512], stddev=stddev),
+                                 trainable=trainable, name='weights')
             self.add_variable_summaries(kernel)
             conv = tf.nn.conv2d(self.conv4_1, kernel, [1, 1, 1, 1], padding='SAME')
             biases = tf.Variable(tf.constant(0.0, shape=[512], dtype=tf.float32),
-                                 trainable=self.trainable, name='biases')
+                                 trainable=trainable, name='biases')
             out = tf.nn.bias_add(conv, biases)
             out = tf.nn.relu(out, name=scope)
             if self.batch_norm:
-                out = tf.contrib.layers.batch_norm(out)
+                out = tf.contrib.layers.batch_norm(out, trainable=self.bn_trainable)
             self.conv4_2 = out
             self.parameters += [kernel, biases]
 
@@ -271,10 +284,12 @@ class Vggish:
                                     strides=[1, 2, 2, 1],
                                     padding='SAME',
                                     name='pool4')
+        if self.dropout:
+            self.pool4 = tf.nn.dropout(self.pool4, 0.3)
 
     def fc_layers(self):
         # fc1
-        DENSE_SIZE = 1024
+        DENSE_SIZE = self.dense_size
         summary_name = 'light'
         with tf.name_scope('fc1') as scope:
             # stddev = np.sqrt(2 / np.prod(self.pool4.get_shape().as_list()[1:]))
@@ -287,10 +302,11 @@ class Vggish:
             pool4_flat = tf.reshape(self.pool4, [-1, shape])
             out = tf.nn.bias_add(tf.matmul(pool4_flat, fc1w), fc1b)
             out = tf.nn.relu(out)
+            # out = tf.nn.leaky_relu(out)
             if self.dropout:
-                out = tf.nn.dropout(out, 0.2)
+                out = tf.nn.dropout(out, 0.3)
             if self.batch_norm:
-                out = tf.contrib.layers.batch_norm(out)
+                out = tf.contrib.layers.batch_norm(out, trainable=self.bn_trainable)
             self.fc1 = out
             self.parameters += [fc1w, fc1b]
 
@@ -304,10 +320,11 @@ class Vggish:
                                trainable=self.trainable, name='biases')
             out = tf.nn.bias_add(tf.matmul(self.fc1, fc2w), fc2b)
             out = tf.nn.relu(out)
+            # out = tf.nn.leaky_relu(out)
             if self.dropout:
                 out = tf.nn.dropout(out, 0.5)
             if self.batch_norm:
-                out = tf.contrib.layers.batch_norm(out)
+                out = tf.contrib.layers.batch_norm(out, trainable=self.bn_trainable)
             self.fc2 = out
             self.parameters += [fc2w, fc2b]
 

@@ -43,8 +43,17 @@ def get_imseq():
     
     image = librosa.power_to_db(mel, ref=np.max)
     image = (image.clip(-80, 0) + 80) / 80
-    imseq = image.T.flatten()[:image.size - image.size % (audio.MELS*audio.MELS)].reshape((-1, audio.MELS,audio.MELS))
-    return imseq
+    time_fract = (audio.MELS * audio.HOP_LENGTH) / audio.SAMPLE_RATE
+    one_sec_frames = int(audio.MELS / time_fract)
+    # import pdb; pdb.set_trace()
+    # imseq = image.T.flatten()[:image.size - image.size % (audio.MELS*audio.MELS)].reshape((-1, audio.MELS,audio.MELS))
+    i = 0
+    for i in range(0, image.T.shape[0], one_sec_frames):
+        # print('i:', i)
+        cur = image[0:audio.MELS, i:i+audio.MELS].T
+        patch = np.zeros((audio.MELS, audio.MELS))
+        patch[0:cur.shape[0], 0:cur.shape[1]] = cur
+        yield patch
 
 
 def get_lines_with_file(f, nlines, repeat):
@@ -90,7 +99,7 @@ def train(tip, iters=None, learning_rate=0.001, batch_norm=False):
     model_version = 1
     model_path = 'models/model-{}/'.format(model_version)
     accuracy_print_steps = 100
-    batch_size = 22
+    batch_size = 64
     # learning_rate = 0.001
     num_hidden_layers = 2
     hidden_layer_size = 512
@@ -122,7 +131,8 @@ def train(tip, iters=None, learning_rate=0.001, batch_norm=False):
                                   classes=2,
                                   mean=[0.343388929118],
                                   trainable=training,
-                                  batch_norm=batch_norm)
+                                  batch_norm=batch_norm,
+                                  dense_size=64)
 
             with tf.name_scope("targets"):
                 _labels = tf.placeholder(tf.float32, shape=(None, 2), name='labels')
@@ -154,7 +164,7 @@ def train(tip, iters=None, learning_rate=0.001, batch_norm=False):
                                                               time_str,
                                                               learning_rate)
             saver = tf.train.Saver(tf.global_variables(), max_to_keep=None)
-            last_checkpoint = "D:\\checkpoint\\2018-03-20_232627"
+            last_checkpoint = "D:\\checkpoint\\2018-04-06_223852"
             saver.restore(sess, tf.train.latest_checkpoint(last_checkpoint))
             
 
@@ -190,7 +200,8 @@ def train(tip, iters=None, learning_rate=0.001, batch_norm=False):
                 secs -= mins * 60
                 return '{}:{:02d}'.format(mins, int(secs))
             
-            time_fract = (audio.MELS * audio.HOP_LENGTH) / audio.SAMPLE_RATE
+            # time_fract = (audio.MELS * audio.HOP_LENGTH) / audio.SAMPLE_RATE
+            time_fract = 1
             cur_time = 0
             for iteration in range(1000):
                 features, labels = get_data_from_tip(tip, batch_size)

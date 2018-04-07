@@ -3,6 +3,7 @@ import multiprocessing
 import os
 import tensorflow as tf
 import numpy as np
+import queue
 
 from myqueue import MyQueue
 from data import DataClass, DataType, NomixDS, MultiDatasets, MixWithVocalResult, InstWithVocalResult
@@ -12,6 +13,7 @@ from audio import get_image_with_audio, to_audiosegment, get_rand_audio_patch, \
                   get_rand_spect_patch, get_mel_filename, get_offset_range_patch
 
 from exceptions import NoThreadSlots
+import traceback
 
 
 class PipelineStage:
@@ -150,6 +152,9 @@ class AudioJoinStage(PipelineStage):
             self.output_queue.put((vocl, 1))
             self.output_queue.put((inst, 0))
 
+class HasNanException(Exception):
+    pass
+
 
 class FilenameToSlice(PipelineStage):
     def __init__(self, config, context):
@@ -157,6 +162,31 @@ class FilenameToSlice(PipelineStage):
         self._max_parallel = 6
     
     def write(self, data):
+        try:
+            with np.errstate(all='raise'):
+                self._safe_write(data)
+        except queue.Full:
+            raise
+        except HasNanException:
+            print("[!] Nan detected, skipping..")
+            open("db_nans.log", 'ab').write(str(self._get_desc(data)).encode('utf-8'))
+            open("db_nans.log", 'a').write('------------------------------------')
+        except Exception:
+            print("[!] Warning detected, skipping..")
+            tb = traceback.format_exc()
+            open("numpy_warns.log", 'ab').write(str(self._get_desc(data)).encode('utf-8'))
+            open("numpy_warns.log", 'ab').write(str(tb).encode('utf-8'))
+            open("numpy_warns.log", 'a').write('------------------------------------')
+
+    def _get_desc(self, data):
+        if isinstance(data, (MixWithVocalResult, InstWithVocalResult)):
+            return data.desc()
+
+        params, label = data
+        filename, offset, _range = params
+        return filename
+
+    def _safe_write(self, data):
         # print(data)
         if isinstance(data, MixWithVocalResult):
             self.output_queue.put((data.desc(), data._slice(), data.get_label()))
@@ -169,6 +199,11 @@ class FilenameToSlice(PipelineStage):
         filename, offset, _range = params
 
         aud = get_offset_range_patch(filename, offset, _range)
+
+        # if np.isnan(aud).any() or np.isinf(aud).any():
+        if np.isnan(aud).any():
+            raise HasNanException()
+
         desc = str(params)
 
         self.output_queue.put((desc, aud, label))

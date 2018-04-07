@@ -221,7 +221,11 @@ def get_offset_range_patch(audio_filename, offset, _range=None, mix_filename=Non
     elif len(_range) == 2:
         path = 2
         start, end = _range
-        start += offset
+        try:
+            start += offset
+        except:
+            print('[!] audio.py: range except:', _range)
+            raise
         if end - start > MELS:
             end = start + MELS
         _range = (start, end)
