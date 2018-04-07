@@ -65,7 +65,7 @@ class MixWithVocalResult(DatasetResult):
         return ret
 
     def desc(self):
-        return 'voc:' + str(self.voc[0]) + '+ mix:' + self.mix
+        return 'voc:' + str(self.voc[0][0]) + '+ mix:' + self.mix
         
 
     def get_label(self):
