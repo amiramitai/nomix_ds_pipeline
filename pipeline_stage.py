@@ -118,11 +118,6 @@ class DatasetStage(PipelineStage):
         self.output_queue.put(i)
 
 
-class DualDatasetStage(DatasetStage):
-    def __init__(self, config, context):
-        super().__init__(config, context, SimpleDualDS(config['params']))
-
-
 class MultiDatasetsStage(DatasetStage):
     def __init__(self, config, context):
         super().__init__(config, context, MultiDatasets(config['params']))

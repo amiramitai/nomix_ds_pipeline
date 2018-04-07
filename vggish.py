@@ -77,14 +77,65 @@ def put_kernels_on_grid (kernel, grid_Y, grid_X, pad = 1):
     return x7
 
 
+conv_vars = [
+    'BatchNorm_1/beta',
+    'BatchNorm_1/moving_mean',
+    'BatchNorm_1/moving_variance',
+    'conv1_1/biases',
+    'conv1_1/weights',
+    'BatchNorm_2/beta',
+    'BatchNorm_2/moving_mean',
+    'BatchNorm_2/moving_variance',
+    'conv2_1/biases',
+    'conv2_1/weights',
+    'BatchNorm_3/beta',
+    'BatchNorm_3/moving_mean',
+    'BatchNorm_3/moving_variance',
+    'conv3_1/biases',
+    'conv3_1/weights',
+    'BatchNorm_4/beta',
+    'BatchNorm_4/moving_mean',
+    'BatchNorm_4/moving_variance',
+    'conv3_2/biases',
+    'conv3_2/weights',
+    'BatchNorm_5/beta',
+    'BatchNorm_5/moving_mean',
+    'BatchNorm_5/moving_variance',
+    'conv4_1/biases',
+    'conv4_1/weights',
+    'BatchNorm_6/beta',
+    'BatchNorm_6/moving_mean',
+    'BatchNorm_6/moving_variance',
+    'conv4_2/biases',
+    'conv4_2/weights',
+    'BatchNorm_7/beta',
+    'BatchNorm_7/moving_mean',
+    'BatchNorm_7/moving_variance',
+]
+
+fc_vars = [
+    'fc1/biases',
+    'fc1/weights',
+    'BatchNorm_8/beta',
+    'BatchNorm_8/moving_mean',
+    'BatchNorm_8/moving_variance',
+    'fc2/biases',
+    'fc2/weights',
+    'BatchNorm/beta',
+    'BatchNorm/moving_mean',
+    'BatchNorm/moving_variance',
+    'fc3/biases',
+    'fc3/weights',
+]
+
+
 class Vggish:
-    def __init__(self, imgs, mean=None, classes=1000, sess=None, trainable=False,
-                 batch_norm=False, dropout=None, only_dense=False, dense_size=1024, bn_trainable=False):
+    def __init__(self, imgs, classes=2, trainable=False, batch_norm=True,
+                 dropout=None, only_dense=False, dense_size=64, bn_trainable=False):
         self.batch_norm = batch_norm
         self.dropout = dropout
         self.classes = classes
         self.only_dense = only_dense
-        self.mean = mean
         self.imgs = imgs
         self.trainable = trainable
         self.bn_trainable = bn_trainable
@@ -92,15 +143,29 @@ class Vggish:
         self.summaries = []
         self.dense_size = dense_size
         self.heavy_summaries = []
-        # self.probs = tf.nn.softmax(self.fc3l)
         # self.weight_init_type = "msra"
         self.weight_init_type = "truc"
         self.w_initializer = None
-
         self.convlayers()
         self.fc_layers()
 
+    def get_vars_to_train(self):
+        vars_to_train = []
+        for v in tf.trainable_variables():
+            if v is None:
+                continue
+            
+            if self.bn_trainable:
+                if 'BatchNorm' in v.name:
+                    print('[+] skipping:', v.name)
+                    continue
+            
+            vars_to_train.append(v)
+        return vars_to_train
+
     def add_variable_summaries(self, var, name='light'):
+        if not self.trainable:
+            return
         
         summaries = self.summaries
         if name == 'heavy':
@@ -115,12 +180,13 @@ class Vggish:
             summaries.append(tf.summary.scalar('min', tf.reduce_min(var)))
             # summaries.append(tf.summary.histogram('histogram', var))
 
-    def add_weights_summary(self, kernel, shape, pad=1):      
+    def add_weights_summary(self, kernel, shape, pad=1):
+        if not self.trainable:
+            return
+        
         x = put_kernels_on_grid(kernel, 8, 8)
         summary = tf.summary.image('conv1/features', x)
-        self.heavy_summaries.append(summary)
-
-        
+        self.heavy_summaries.append(summary)        
 
     def init_weight(self, shape, stddev=1e-01):
         if self.weight_init_type == "msra":
@@ -140,10 +206,7 @@ class Vggish:
             trainable = False
         # zero-mean input
         with tf.name_scope('preprocess') as scope:
-            # mean = tf.constant(self.mean, dtype=tf.float32, shape=[1, 1, 1, len(self.mean)], name='img_mean')
-            # images = self.imgs-mean
             images = self.imgs
-            # images = tf.map_fn(lambda f: tf.image.per_image_standardization(f), images)
             if self.batch_norm:
                 images = tf.contrib.layers.batch_norm(images)
         # reader = pywrap_tensorflow.NewCheckpointReader("S:\\Projects\\nomix\\vggish_model.ckpt")
@@ -199,6 +262,7 @@ class Vggish:
 
         if self.dropout:
             self.pool2 = tf.nn.dropout(self.pool2, 0.3)
+
 
         # conv3_1
         with tf.name_scope('conv3_1') as scope:
@@ -341,3 +405,39 @@ class Vggish:
             #     out = tf.contrib.layers.batch_norm(out)
             self.fc3l = out
             self.parameters += [fc3w, fc3b]
+    
+    def load_weights(self, weights_path, vars_names=None):
+        if not vars_names:
+            all_vars = conv_vars + fc_vars
+            vars_names = all_vars
+        
+        def should_load(name):
+            for tl in vars_names:
+                if tl in name:
+                    return True
+
+            return False
+        
+        # reader = pywrap_tensorflow.NewCheckpointReader(latest)
+        latest = tf.train.latest_checkpoint(weights_path)
+        to_load = []
+        for v in tf.global_variables():
+            if not should_load(v.name):
+                continue
+            to_load.append(v)
+        saver = tf.train.Saver(to_load, max_to_keep=None)
+        saver.restore(tf.get_default_session(), latest)
+
+
+
+if __name__ == '__main__':
+    batch_size = 1
+    default_device = '/cpu:0'
+    weights_path = '/Users/amiramitai/Projects/nomix/2018-04-07_121235'
+    with tf.device(default_device):
+        with tf.Session(graph=tf.Graph(), config=tf.ConfigProto()) as sess:
+            with tf.name_scope("inputs"):
+                _images = tf.placeholder(tf.float32, [batch_size, 224, 224, 1])
+                _is_training = tf.placeholder(tf.bool, name='is_training')
+            model = Vggish(_images)
+            model.load_weights(weights_path)
