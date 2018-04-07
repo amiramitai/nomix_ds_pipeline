@@ -91,54 +91,24 @@ def train(tip, iters=None, learning_rate=0.001, batch_norm=False):
             with tf.name_scope("inputs"):
                 # _images = tf.placeholder(tf.float32, [None, 224, 224, 1])
                 _images = tf.placeholder(tf.float32, [batch_size, 224, 224, 1])
+                _labels = tf.placeholder(tf.float32, [batch_size, 224, 224, 2])
                 _is_training = tf.placeholder(tf.bool, name='is_training')
-            model = vggish.Vggish(_images,
-                                  classes=2,
-                                  trainable=training,
-                                  batch_norm=batch_norm,
-                                  dropout=dropout,
-                                  only_dense=train_only_dense,
-                                  dense_size=dense_size,
-                                  bn_trainable=batch_norms_training)
+            import fcn8
+            fcn_net = fcn8.FCN()
+            fcn_loss = fcn_net.loss_op(logits=fcn_net.result, labels=_labels)
 
             with tf.name_scope("targets"):
                 _labels = tf.placeholder(tf.float32, shape=(None, 2), name='labels')
 
             with tf.name_scope("outputs"):
-                logits = model.fc3l
-                # predictions = tf.nn.softmax(logits, name='predictions')
-                predictions = tf.nn.sigmoid(logits, name='predictions')
-                
-                tvars = tf.trainable_variables()
-                for v in tvars:
-                    print(v)
-                    if 'weights' in v.name:
-                        heavy_sum.append(tf.summary.histogram(v.name, v))
-                        # if 'conv1_1' in v.name:
-                        #     light_sum.append(tf.summary.histogram(v.name, v))
-                for v in tvars:
-                    if 'bias' in v.name:
-                        heavy_sum.append(tf.summary.histogram(v.name, v))
-                        # if 'conv1_1' in v.name:
-                        #     light_sum.append(tf.summary.histogram(v.name, v))
+                logits = fcn_net.result
+                predictions = tf.nn.softmax(logits, name='predictions')
+                predictions = tf.split(predictions, 2, 3)[1]
+                # predictions = tf.nn.sigmoid(logits, name='predictions')
                 
                 light_sum.append(tf.summary.histogram("predictions", predictions))
-                light_sum.extend(model.summaries)
-                heavy_sum.extend(model.heavy_summaries)
-
-            with tf.name_scope("0_cost"):
-                cross_entropy = tf.nn.sigmoid_cross_entropy_with_logits(
-                    logits=logits,
-                    labels=_labels,
-                    name='cross_entropy'
-                )
-
-                tvars = tf.trainable_variables() 
-                L2 = [tf.nn.l2_loss(v) for v in tvars if 'bias' not in v.name]
-                lossL2 = tf.add_n(L2) * 0.01
-
-                cost = tf.reduce_mean(cross_entropy, name='cost') + lossL2
-                light_sum.append(tf.summary.scalar("cost", cost))
+                # light_sum.extend(model.summaries)
+                # heavy_sum.extend(model.heavy_summaries)
 
             def my_capper(t):
                 print(t)
@@ -153,14 +123,15 @@ def train(tip, iters=None, learning_rate=0.001, batch_norm=False):
                                                               learning_rate)
             with tf.name_scope("0_train"):
                 with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):         
-                    vars_to_train = model.get_vars_to_train()
+                    # vars_to_train = model.get_vars_to_train()
 
+                    # fcn_op = fcn_net.train_op()
                     global_step = tf.Variable(0, name='global_step')
                     learning_rate = tf.train.exponential_decay(learning_rate, global_step, 100000, 0.96, staircase=True)
                     optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate)
                     # optimizer = tf.train.GradientDescentOptimizer(learning_rate=learning_rate)
-                    grads_and_vars = optimizer.compute_gradients(cost, var_list=vars_to_train)
-                    grads_and_vars = [(my_capper(gv[0]), gv[1]) for gv in grads_and_vars]
+                    grads_and_vars = optimizer.compute_gradients(fcn_net.loss_op, var_list=tf.trainable_variables())
+                    # grads_and_vars = [(my_capper(gv[0]), gv[1]) for gv in grads_and_vars]
                     optimizer = optimizer.apply_gradients(grads_and_vars, global_step=global_step)
                     
                     correct_predictions = tf.equal(tf.argmax(predictions, 1),
@@ -181,55 +152,33 @@ def train(tip, iters=None, learning_rate=0.001, batch_norm=False):
             saver = tf.train.Saver(tf.global_variables(), max_to_keep=None)
             iteration = 0
 
-            try:
-                print('[+] loading startup.json')
-                startup = json.load(open('startup.vggish.json', 'r'))
-                print('[+] loading path:', startup['path'])
-                state = json.load(open(startup['path'], 'r'))
-                print('[+] loading checkpoint:', state['checkpoint_path'])
-                last_checkpoint = os.path.dirname(state['checkpoint_path'])
+            # try:
+            #     print('[+] loading startup.json')
+            #     startup = json.load(open('startup.vggish.json', 'r'))
+            #     print('[+] loading path:', startup['path'])
+            #     state = json.load(open(startup['path'], 'r'))
+            #     print('[+] loading checkpoint:', state['checkpoint_path'])
+            #     last_checkpoint = os.path.dirname(state['checkpoint_path'])
                 
-                weights_to_load = vggish.conv_vars + vggish.fc_vars
-                if train_only_dense:
-                    weights_to_load = vggish.conv_vars
-                model.load_weights(last_checkpoint, vars_names=weights_to_load)
+            #     weights_to_load = vggish.conv_vars + vggish.fc_vars
+            #     if train_only_dense:
+            #         weights_to_load = vggish.conv_vars
+            #     model.load_weights(last_checkpoint, vars_names=weights_to_load)
                 
-                iteration = state['iteration']
-                best_loss = state['best_loss']
-                if 'train_loss' in state:
-                    best_loss = state['best_loss']
+            #     iteration = state['iteration']
+            #     best_loss = state['best_loss']
+            #     if 'train_loss' in state:
+            #         best_loss = state['best_loss']
 
-                checkpoint_path = state['checkpoint_path']
-            except:
-                print('[!] no models to checkpoint from..')
-                raise
+            #     checkpoint_path = state['checkpoint_path']
+            # except:
+            #     print('[!] no models to checkpoint from..')
+            #     raise
             writer = tf.summary.FileWriter(log_string)
 
-
             augmenters = [
-                # blur images with a sigma between 0 and 3.0
                 iaa.Noop(),
-                iaa.GaussianBlur(sigma=(0.5, 2.0)),
-                iaa.Add((-50.0, 50.0), per_channel=False),
-                iaa.AdditiveGaussianNoise(loc=0,
-                                            scale=(0.07*255, 0.07*255),
-                                            per_channel=False),
-                iaa.Dropout(p=0.07, per_channel=False),
-                iaa.CoarseDropout(p=(0.05, 0.15),
-                                    size_percent=(0.1, 0.9),
-                                    per_channel=False),
-                iaa.SaltAndPepper(p=(0.05, 0.15), per_channel=False),
-                iaa.Salt(p=(0.05, 0.15), per_channel=False),
-                iaa.Pepper(p=(0.05, 0.15), per_channel=False),
-                iaa.ContrastNormalization(alpha=(iap.Uniform(0.02, 0.03),
-                                            iap.Uniform(1.7, 2.1))),
-                iaa.ElasticTransformation(alpha=(0.5, 2.0)),
             ]
-
-            if not augmentation:
-                augmenters = [
-                    iaa.Noop(),
-                ]
             
             seq = iaa.Sequential(
                 iaa.OneOf(augmenters),
@@ -278,8 +227,10 @@ def train(tip, iters=None, learning_rate=0.001, batch_norm=False):
                     _is_training: training
                 }
 
+                fcn_loss = fcn_net.loss_op(logits=fcn_net.result, labels=_labels)
+                fcn_op = fcn_net.train_op()
                 train_loss, val_acc, _, p, summary, grad, _corr_pred = sess.run(
-                    [cost,
+                    [fcn_loss,
                      accuracy,
                      optimizer,
                      logits,
