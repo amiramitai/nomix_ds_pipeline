@@ -214,7 +214,7 @@ def get_loudness_range_with_offest(audio_filename, offset):
     return get_range_with_offset_and_ranges(offset, loudness_ranges)
 
 
-def get_offset_range_patch(audio_filename, offset, _range=None, mix_filename=None):
+def get_offset_range_patch(audio_filename, offset, _range=None, mix_filename=None, mels=MELS, cols=MELS):
     path = 1
     if _range is None:
         _range = get_loudness_range_with_offest(audio_filename, offset)
@@ -226,8 +226,8 @@ def get_offset_range_patch(audio_filename, offset, _range=None, mix_filename=Non
         except:
             print('[!] audio.py: range except:', _range)
             raise
-        if end - start > MELS:
-            end = start + MELS
+        if end - start > cols:
+            end = start + cols
         _range = (start, end)
     else:
         path = 3
@@ -240,7 +240,7 @@ def get_offset_range_patch(audio_filename, offset, _range=None, mix_filename=Non
     # print(mel_filename, _range)
     res = get_mel_spect(mel_filename, _range)
     # res = mel_spect.T[_range[0]:_range[1]].T
-    if res.shape == (MELS, MELS):
+    if res.shape == (mels, cols):
         return res
 
     # print('[+] extending patch!', res.shape, _range, audio_filename)
@@ -248,31 +248,7 @@ def get_offset_range_patch(audio_filename, offset, _range=None, mix_filename=Non
     if (end - start) < SAMPLE_MIN_LENGTH:
         raise RuntimeError("Too short", audio_filename, offset, _range, mix_filename, path)
 
-    patch = np.zeros((MELS, MELS))
-    patch[0:res.shape[0], 0:res.shape[1]] = res
-    return patch
-
-
-def get_rand_spect_patch(audio_filename, _range=None):
-    if _range:
-        # print('[+] pick_within')
-        _range = pick_within_range(*_range)
-    else:
-        # print('[+] get_rand_loudness_range')
-        _range = get_rand_loudness_range(audio_filename)
-
-    mel_filename = get_mel_filename(audio_filename)
-    res = get_mel_spect(mel_filename, _range)
-    # res = mel_spect.T[_range[0]:_range[1]].T
-    if res.shape == (MELS, MELS):
-        return res
-
-    # print('[+] extending patch!', res.shape, _range, audio_filename)
-    start, end = _range
-    if (end - start) < SAMPLE_MIN_LENGTH:
-        raise RuntimeError("Too short", audio_filename, _range)
-
-    patch = np.zeros((MELS, MELS))
+    patch = np.zeros((mels, cols))
     patch[0:res.shape[0], 0:res.shape[1]] = res
     return patch
 
@@ -352,13 +328,3 @@ if __name__ == '__main__':
     # fig.axes[1].set_visible(False)
     import pickle
     jaud = pickle.load(open(r"T:\cache\jamaudio.pickle", 'rb'))
-    for i, (filename, _range) in enumerate(jaud.instrumentals()):
-        print(i)
-        # filename = r'T:\datasets\quasi\separation\set1\vieux_farka-ana\Bal_Pan_Eq_Comp_Fx\vox1.wav'
-        try:
-            patch = get_rand_spect_patch(filename, _range)
-            print(patch.shape)
-        except:
-            traceback.print_exc()
-        # plt.imshow(patch, cmap='hot')
-        # plt.show()

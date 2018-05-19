@@ -22,6 +22,8 @@ import shutil
 
 from imgaug import augmenters as iaa
 from imgaug import parameters as iap
+import fcn8
+
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"]="3"
 
@@ -39,7 +41,6 @@ def get_data_from_tip(tip, batch_size):
         features.append(f.reshape((224, 224, 1)))
         labels.append(l)
         descriptions.append(d)
-
     return descriptions, np.array(features), np.array(labels)
 
 def mix(a, b, mix_factor):
@@ -56,15 +57,15 @@ def train(tip, iters=None, learning_rate=0.001, batch_norm=False):
     # default_device = '/cpu:0'
 
     # hyperparams
-    batch_size = 94
+    batch_size = 64
     training = True
     batch_norms_training = False
     # steps
-    light_summary_steps = 25
+    light_summary_steps = 10
     heavy_summary_steps = 250
     checkpoint_steps = 500
     # stats / logging
-    model_version = 1
+    model_version = 2
     time_str = datetime.datetime.now().strftime('%m-%d--%H%M%S')
     best_loss = 0.6
     batch_num = 0
@@ -77,7 +78,7 @@ def train(tip, iters=None, learning_rate=0.001, batch_norm=False):
     train_only_dense = False
     dense_size = 64
     dropout = True
-    learning_rate = 1e-6
+    learning_rate = 1e-4
     augmentation = True    
 
     with tf.device(default_device):
@@ -89,16 +90,15 @@ def train(tip, iters=None, learning_rate=0.001, batch_norm=False):
         config.gpu_options.allow_growth = True
         with tf.Session(graph=tf.Graph(), config=config) as sess:
             with tf.name_scope("inputs"):
-                # _images = tf.placeholder(tf.float32, [None, 224, 224, 1])
                 _images = tf.placeholder(tf.float32, [batch_size, 224, 224, 1])
-                _labels = tf.placeholder(tf.float32, [batch_size, 224, 224, 2])
                 _is_training = tf.placeholder(tf.bool, name='is_training')
-            import fcn8
-            fcn_net = fcn8.FCN()
-            fcn_loss = fcn_net.loss_op(logits=fcn_net.result, labels=_labels)
 
             with tf.name_scope("targets"):
-                _labels = tf.placeholder(tf.float32, shape=(None, 2), name='labels')
+                _labels = tf.placeholder(tf.float32, [batch_size, 224, 224, 2])
+
+            fcn_net = fcn8.FCN(batch_size=batch_size)
+            fcn_net.build_seg_net(_images)
+            fcn_loss = fcn_net.loss_op(logits=fcn_net.result, labels=_labels)
 
             with tf.name_scope("outputs"):
                 logits = fcn_net.result
@@ -121,6 +121,9 @@ def train(tip, iters=None, learning_rate=0.001, batch_norm=False):
             log_string = 'logs/{}-vggish/{}-lr-{:.8f}'.format(model_version,
                                                               time_str,
                                                               learning_rate)
+            with tf.name_scope("0_cost"):
+                light_sum.append(tf.summary.scalar("cost", fcn_loss))
+            
             with tf.name_scope("0_train"):
                 with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):         
                     # vars_to_train = model.get_vars_to_train()
@@ -152,28 +155,27 @@ def train(tip, iters=None, learning_rate=0.001, batch_norm=False):
             saver = tf.train.Saver(tf.global_variables(), max_to_keep=None)
             iteration = 0
 
-            # try:
-            #     print('[+] loading startup.json')
-            #     startup = json.load(open('startup.vggish.json', 'r'))
-            #     print('[+] loading path:', startup['path'])
-            #     state = json.load(open(startup['path'], 'r'))
-            #     print('[+] loading checkpoint:', state['checkpoint_path'])
-            #     last_checkpoint = os.path.dirname(state['checkpoint_path'])
+            try:
+                print('[+] loading startup.json')
+                startup = json.load(open('startup.fcn.json', 'r'))
+                print('[+] loading path:', startup['path'])
+                state = json.load(open(startup['path'], 'r'))
+                print('[+] loading checkpoint:', state['checkpoint_path'])
+                last_checkpoint = os.path.dirname(state['checkpoint_path'])
                 
-            #     weights_to_load = vggish.conv_vars + vggish.fc_vars
-            #     if train_only_dense:
-            #         weights_to_load = vggish.conv_vars
-            #     model.load_weights(last_checkpoint, vars_names=weights_to_load)
+                weights_to_load = vggish.conv_vars + vggish.fc_vars
+                if train_only_dense:
+                    weights_to_load = vggish.conv_vars
+                model.load_weights(last_checkpoint, vars_names=weights_to_load)
                 
-            #     iteration = state['iteration']
-            #     best_loss = state['best_loss']
-            #     if 'train_loss' in state:
-            #         best_loss = state['best_loss']
+                iteration = state['iteration']
+                best_loss = state['best_loss']
+                if 'train_loss' in state:
+                    best_loss = state['best_loss']
 
-            #     checkpoint_path = state['checkpoint_path']
-            # except:
-            #     print('[!] no models to checkpoint from..')
-            #     raise
+                checkpoint_path = state['checkpoint_path']
+            except:
+                print('[!] no models to checkpoint from..')
             writer = tf.summary.FileWriter(log_string)
 
             augmenters = [
@@ -227,8 +229,6 @@ def train(tip, iters=None, learning_rate=0.001, batch_norm=False):
                     _is_training: training
                 }
 
-                fcn_loss = fcn_net.loss_op(logits=fcn_net.result, labels=_labels)
-                fcn_op = fcn_net.train_op()
                 train_loss, val_acc, _, p, summary, grad, _corr_pred = sess.run(
                     [fcn_loss,
                      accuracy,
@@ -259,8 +259,8 @@ def train(tip, iters=None, learning_rate=0.001, batch_norm=False):
                     best_loss = train_loss
                     timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H%M%S")
                     
-                    checkpoint_dir = os.path.join('D:\\checkpoint', timestamp)
-                    checkpoint_path = os.path.join('D:\\checkpoint', timestamp, 'model.ckpt')
+                    checkpoint_dir = os.path.join('D:\\checkpoint_fcn', timestamp)
+                    checkpoint_path = os.path.join('D:\\checkpoint_fcn', timestamp, 'model.ckpt')
                     print('\t\tSaving model to:' + checkpoint_path)
                     saver.save(sess, checkpoint_path, global_step=batch_num)
                     state = {
@@ -273,12 +273,12 @@ def train(tip, iters=None, learning_rate=0.001, batch_norm=False):
                         'log_string': log_string,
                     }
                     # state_path = os.path.join('save', timestamp, 'state.json')
-                    state_path = os.path.join('D:\\checkpoint', timestamp, 'state.json')
+                    state_path = os.path.join('D:\\checkpoint_fcn', timestamp, 'state.json')
                     open(state_path, 'w').write(json.dumps(state))
                     startup = {
                         'path': state_path,
                     }
-                    open('startup.vggish.json', 'w').write(json.dumps(startup))
+                    open('startup.fcn.json', 'w').write(json.dumps(startup))
                     models_history.append(checkpoint_dir)
                     while len(models_history) > models_to_keep:
                         try:
@@ -294,18 +294,29 @@ if __name__ == '__main__':
     from pipeline import Pipeline
     import yaml
     import matplotlib.pyplot as plt
-    with open('configs/win_client.2.yaml') as f:
+    import numpy as np
+    with open('configs/win_client.fcn.yaml') as f:
         config = yaml.safe_load(f)
     amp = Pipeline(config['pipeline'])
     amp.run()
     amp.keepalive(block=False)
     tip = amp._get_tip_queue()
     # while True:
+    #     data = tip.get()
+    #     d, f, l = data
     #     fig = plt.figure(figsize=(16,4))
-    #     a=fig.add_subplot(1,1,1)
-    #     a = tip.get()
-    #     print("[+] Y:",a[1])
-    #     plt.imshow(a[0], cmap='hot')
+    #     fig.add_subplot(3,1,1)
+    #     plt.imshow(f, cmap='Greys_r')
+    #     a, b = np.split(l, 2, axis=2)
+    #     # import pdb; pdb.set_trace()
+    #     # b = (b.reshape((224, 224)) > 0.2).astype(float)
+    #     # a = np.ones(b.shape) - b
+    #     print("[+] shapes:",f.shape, a.shape, b.shape, d)
+        
+    #     fig.add_subplot(3,2,1)
+    #     plt.imshow(a.reshape((224, 224)), cmap='Greys_r')
+    #     fig.add_subplot(3,3,1)
+    #     plt.imshow(b.reshape((224, 224)), cmap='Greys_r')
     #     plt.show()
     # train(tip, iters=3500, learning_rate=0.1)
     # train(tip, iters=4000, learning_rate=0.01)
@@ -314,7 +325,7 @@ if __name__ == '__main__':
     # for lr in [1e-05, 1e-06, 1e-07, 1e-08]:
     while True:
         # for lr in [1e-04, 1e-05, 1e-06]:
-        for lr in [1e-06]:
+        for lr in [1e-05]:
             try:
                 train(tip, iters=None, learning_rate=lr, batch_norm=True)
             except KeyboardInterrupt:
@@ -330,7 +341,7 @@ if __name__ == '__main__':
             except:
                 traceback.print_exc()
                 tb = traceback.format_exc()
-                send_mail(subject="Training Failed!", body=tb)
+                # send_mail(subject="Training Failed!", body=tb)
                 raise
         # train(tip, iters=3000, learning_rate=lr, batch_norm=True)
         # train(tip, iters=3000, learning_rate=lr, batch_norm=True)

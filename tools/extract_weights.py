@@ -3,15 +3,18 @@
 
 import sys
 from tensorflow.python import pywrap_tensorflow
+import tensorflow as tf
 import numpy as np
 import os
 
-reader = pywrap_tensorflow.NewCheckpointReader(sys.argv[1])
+reader = pywrap_tensorflow.NewCheckpointReader( tf.train.latest_checkpoint(sys.argv[1]))
 var_to_shape_map = reader.get_variable_to_shape_map()
 for key in sorted(var_to_shape_map):
+    if 'Adam' in key or '_bn' in key:
+        continue
     print("tensor_name: ", key)
-    out_file = os.path.join(sys.argv[2], key.replace('/', '_'))
-    np.save(out_file, reader.get_tensor(key))
+    # out_file = os.path.join(sys.argv[2], key.replace('/', '_'))
+    # np.save(out_file, reader.get_tensor(key))
 
     # print(reader.get_tensor(key))
 # print all tensors in checkpoint file

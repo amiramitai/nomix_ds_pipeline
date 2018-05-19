@@ -7,6 +7,8 @@ import re
 import traceback
 from collections import defaultdict
 
+import numpy as np
+
 
 from utils import iterate_files, iterate_audio_files
 
@@ -17,6 +19,8 @@ from audio import SAMPLE_MIN_LENGTH
 
 from collections import defaultdict
 
+
+FCN_VOC_THRESHOLD = 0.5
 
 class DataClass:
     INSTRUMENTAL = 0
@@ -40,10 +44,10 @@ class InstWithVocalResult(DatasetResult):
     def mix(self):
         params, _ = self.inst
         filename, offset, _range = params
-        vaud = get_offset_range_patch(filename, offset, _range)
+        iaud = get_offset_range_patch(filename, offset, _range)
         params, _ = self.voc
         filename, offset, _range = params
-        iaud = get_offset_range_patch(filename, offset, _range)
+        vaud = get_offset_range_patch(filename, offset, _range)
         return (vaud + iaud) / 2.0
 
     def desc(self):
@@ -51,6 +55,61 @@ class InstWithVocalResult(DatasetResult):
 
     def get_label(self):
         return self.voc[1]
+
+    def get_fcn_label(self):
+        params, _ = self.inst
+        filename, offset, _range = params
+        others = get_offset_range_patch(filename, offset, _range)
+        others = (others > FCN_VOC_THRESHOLD).astype('float')
+        others = others.reshape((others.shape[0], others.shape[1], 1))
+
+        params, _ = self.voc
+        filename, offset, _range = params
+        voc = get_offset_range_patch(filename, offset, _range)
+        voc = (voc > FCN_VOC_THRESHOLD).astype('float')
+        voc = voc.reshape((voc.shape[0], voc.shape[1], 1))
+
+        return np.concatenate((others, voc), axis=2)
+
+    def get_frrn_label(self):
+        params, _ = self.voc
+        filename, offset, _range = params
+        voc = get_offset_range_patch(filename, offset, _range)
+        # voc = (voc > FCN_VOC_THRESHOLD).astype('float')
+        voc = voc.reshape((voc.shape[0], voc.shape[1], 1))
+
+        # return voc / 2.0
+        return (voc > FCN_VOC_THRESHOLD).astype('int32')
+    
+    def get_frrn2_label(self):
+        params, _ = self.inst
+        filename, offset, _range = params
+        others = get_offset_range_patch(filename, offset, _range)
+        # others = (others > FCN_VOC_THRESHOLD).astype('float')
+        others = others.reshape((others.shape[0], others.shape[1], 1)) / 2.0
+
+        params, _ = self.voc
+        filename, offset, _range = params
+        voc = get_offset_range_patch(filename, offset, _range)
+        # voc = (voc > FCN_VOC_THRESHOLD).astype('float')
+        voc = voc.reshape((voc.shape[0], voc.shape[1], 1)) / 2.0
+
+        return np.concatenate((others, voc), axis=2)
+    
+    def get_rnn_label(self):
+        params, _ = self.inst
+        filename, offset, _range = params
+        others = get_offset_range_patch(filename, offset, _range)
+        # others = (others > FCN_VOC_THRESHOLD).astype('float')
+        others = others.reshape((others.shape[0], others.shape[1], 1)) / 2.0
+
+        params, _ = self.voc
+        filename, offset, _range = params
+        voc = get_offset_range_patch(filename, offset, _range)
+        # voc = (voc > FCN_VOC_THRESHOLD).astype('float')
+        voc = voc.reshape((voc.shape[0], voc.shape[1], 1)) / 2.0
+
+        return others, voc
 
 
 class MixWithVocalResult(DatasetResult):
@@ -71,6 +130,57 @@ class MixWithVocalResult(DatasetResult):
     def get_label(self):
         return self.voc[1]
 
+    def get_fcn_label(self):
+        params, _ = self.voc
+        filename, offset, _range = params
+        voc = get_offset_range_patch(filename, offset, _range)
+        mix = get_offset_range_patch(filename, offset, _range, self.mix)
+        others = np.clip(mix - voc, 0, 1)
+
+        voc = (voc > FCN_VOC_THRESHOLD).astype('float')
+        others = (others > FCN_VOC_THRESHOLD).astype('float')
+        
+        voc = voc.reshape((voc.shape[0], voc.shape[1], 1))
+        others = others.reshape((others.shape[0], others.shape[1], 1))
+        return np.concatenate((others, voc), axis=2)
+
+    def get_frrn_label(self):
+        params, _ = self.voc
+        filename, offset, _range = params
+        voc = get_offset_range_patch(filename, offset, _range)
+        # voc = (voc > FCN_VOC_THRESHOLD).astype('float')
+        voc = voc.reshape((voc.shape[0], voc.shape[1], 1))
+        return (voc > FCN_VOC_THRESHOLD).astype('int32')
+    
+    def get_frrn2_label(self):
+        params, _ = self.voc
+        filename, offset, _range = params
+        voc = get_offset_range_patch(filename, offset, _range)
+        mix = get_offset_range_patch(filename, offset, _range, self.mix)
+        others = np.clip(mix - voc, 0, 1)
+
+        # voc = (voc > FCN_VOC_THRESHOLD).astype('float')
+        # others = (others > FCN_VOC_THRESHOLD).astype('float')
+        
+        voc = voc.reshape((voc.shape[0], voc.shape[1], 1))
+        others = others.reshape((others.shape[0], others.shape[1], 1))
+        return np.concatenate((others, voc), axis=2)
+
+    def get_rnn_label(self):
+        params, _ = self.voc
+        filename, offset, _range = params
+        voc = get_offset_range_patch(filename, offset, _range)
+        mix = get_offset_range_patch(filename, offset, _range, self.mix)
+        others = np.clip(mix - voc, 0, 1)
+
+        # voc = (voc > FCN_VOC_THRESHOLD).astype('float')
+        # others = (others > FCN_VOC_THRESHOLD).astype('float')
+        
+        voc = voc.reshape((voc.shape[0], voc.shape[1], 1))
+        others = others.reshape((others.shape[0], others.shape[1], 1))
+        return others, voc
+
+        
 
 class JustVocalResult(DatasetResult):
     def __init__(self, filename, offset, _range=None):

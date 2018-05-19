@@ -3,12 +3,13 @@ import numpy as np
 import os
 import sys
 import vggish
+import logging
 
 from tensorflow.python import pywrap_tensorflow
 
 vgg_16_npy_path = 'vgg16.npy' #VGG16 net: ['conv5_1', 'fc6', 'conv5_3', 'fc7', 'fc8', 'conv5_2', 'conv4_1', 'conv4_2', 'conv4_3', 'conv3_3', 'conv3_2', 'conv3_1', 'conv1_1', 'conv1_2', 'conv2_2', 'conv2_1']
-weights_path = '/Users/amiramitai/Projects/nomix/2018-04-07_121235'
-
+# weights_path = '/Users/amiramitai/Projects/nomix/2018-04-07_121235'
+weights_path = "D:\\checkpoint\\2018-04-07_170717"
 
 class FCN(object):
     # load model
@@ -16,12 +17,24 @@ class FCN(object):
         
         self.num_classes  = num_classes
         self.batch_size   = batch_size
+        self.dense_size = 64
+        self.wd = 5e-4
 
+        self.weights_path = weights_path
         self.weights = {}
         latest = tf.train.latest_checkpoint(weights_path)
         reader = pywrap_tensorflow.NewCheckpointReader(latest)
         for k, _ in reader.get_variable_to_shape_map().items():
-            self.weights[k] = reader.get_tensor(k)
+            if 'Adam' in k:
+                continue
+            nk = k
+            if k.startswith('fc1'):
+                nk = 'fc6' + k[3:]
+            if k.startswith('fc2'):
+                nk = 'fc7' + k[3:]
+            if k.startswith('fc3'):
+                nk = 'score_fr' + k[3:]
+            self.weights[nk] = reader.get_tensor(k)
         
 
     def get_weight(self, name):
@@ -66,7 +79,7 @@ class FCN(object):
         """
         reshape the pretrained fc weight into new shape (shape_)
         """
-        W       = self.weights[name]
+        W       = self.weights[name + '/weights']
         W       = W.reshape(shape_)
         init_   = tf.constant_initializer( value = W, dtype = tf.float32 )
         weight_ = tf.get_variable( name, initializer = init_, shape = shape_)
@@ -80,11 +93,11 @@ class FCN(object):
         """
         with tf.variable_scope( name ) as scope:
             if name == 'fc6':
-                W = self.get_weight_fc_reshape( name, [7, 7,  512, 4096])
+                W = self.get_weight_fc_reshape( name, [14, 14,  512, self.dense_size])
             elif name == 'score_fr':
-                W = self.get_weight_fc_reshape( name, [1, 1, 4096, self.num_classes])
+                W = self.get_weight_fc_reshape( name, [1, 1, self.dense_size, self.num_classes])
             else:
-                W = self.get_weight_fc_reshape( name, [1, 1, 4096, 4096])
+                W = self.get_weight_fc_reshape( name, [1, 1, self.dense_size, self.dense_size])
 
             x     = tf.nn.conv2d( x, W, [1, 1, 1, 1], padding = 'SAME' )
             b     = self.get_bias( name  )
@@ -132,7 +145,8 @@ class FCN(object):
         """
         The spatial extent of the output map can be optained from the fact that (upscale_factor -1) pixles are inserted between two successive pixels
         """
-
+        # if name == "upscore32":
+        #     import pdb; pdb.set_trace()
         kernel_size  = self.get_kernel_size( upscale_factor )
         stride       = upscale_factor
         strides      = [1, stride, stride, 1]
@@ -161,14 +175,75 @@ class FCN(object):
         """
         append 1x1 convolution with channel dimension for each class at each of the coarse output location
         """
-        with tf.variable_scope( name ) as scope:
-            in_channels  = bottom.get_shape()[3].value # the channel of input tensor
-            shape        = [ 1, 1, in_channels, self.num_classes ] # define the shape of convolution kernel
-            W            = self.get_weight(name)
-            b            = self.get_bias(name)
-            conv         = tf.nn.conv2d( bottom, W, [ 1, 1, 1, 1], padding = 'SAME')
-            x            = tf.nn.bias_add( conv, b ) 
-            return x 
+        with tf.variable_scope(name) as scope:
+            # get number of input channels
+            in_features = bottom.get_shape()[3].value
+            shape = [1, 1, in_features, self.num_classes]
+            # He initialization Sheme
+            if name == "score_fr":
+                num_input = in_features
+                stddev = (2 / num_input)**0.5
+            elif name == "score_pool4":
+                stddev = 0.001
+            elif name == "score_pool3":
+                stddev = 0.0001
+            # Apply convolution
+            w_decay = self.wd
+
+            weights = self._variable_with_weight_decay(shape, stddev, w_decay,
+                                                       decoder=True)
+            conv = tf.nn.conv2d(bottom, weights, [1, 1, 1, 1], padding='SAME')
+            # Apply bias
+            conv_biases = self._bias_variable([self.num_classes], constant=0.0)
+            bias = tf.nn.bias_add(conv, conv_biases)
+
+            _activation_summary(bias)
+
+            return bias
+
+    def _variable_with_weight_decay(self, shape, stddev, wd, decoder=False):
+        """Helper to create an initialized Variable with weight decay.
+        Note that the Variable is initialized with a truncated normal
+        distribution.
+        A weight decay is added only if one is specified.
+        Args:
+          name: name of the variable
+          shape: list of ints
+          stddev: standard deviation of a truncated Gaussian
+          wd: add L2Loss weight decay multiplied by this float. If None, weight
+              decay is not added for this Variable.
+        Returns:
+          Variable Tensor
+        """
+
+        initializer = tf.truncated_normal_initializer(stddev=stddev)
+        var = tf.get_variable('weights', shape=shape,
+                              initializer=initializer)
+
+        collection_name = tf.GraphKeys.REGULARIZATION_LOSSES
+        if wd and (not tf.get_variable_scope().reuse):
+            weight_decay = tf.multiply(
+                tf.nn.l2_loss(var), wd, name='weight_loss')
+            tf.add_to_collection(collection_name, weight_decay)
+        _variable_summaries(var)
+        return var
+
+    def _bias_variable(self, shape, constant=0.0):
+        initializer = tf.constant_initializer(constant)
+        var = tf.get_variable(name='biases', shape=shape,
+                              initializer=initializer)
+        _variable_summaries(var)
+        return var
+
+    def _add_wd_and_summary(self, var, wd, collection_name=None):
+        if collection_name is None:
+            collection_name = tf.GraphKeys.REGULARIZATION_LOSSES
+        if wd and (not tf.get_variable_scope().reuse):
+            weight_decay = tf.multiply(
+                tf.nn.l2_loss(var), wd, name='weight_loss')
+            tf.add_to_collection(collection_name, weight_decay)
+        _variable_summaries(var)
+        return var
 
     def build_seg_net(self, img ):
         """
@@ -182,6 +257,7 @@ class FCN(object):
         self.fc6         = self.fc(self.model.pool4,   "fc6"    )
         self.fc7         = self.fc(self.fc6,           "fc7"    )
         self.score_fr    = self.fc(self.fc7,           "score_fr" )
+        
         # upsampling : strided convolution
         self.score_pool4 = self.score_layer( self.model.pool3, "score_pool4")
         self.upscore2    = self.upsample_layer(self.score_fr, "upscore2", 2, self.score_pool4.get_shape().as_list() ) # Q: why not conv7 as in the paper?  
@@ -193,7 +269,8 @@ class FCN(object):
        
         imgshape         = img.get_shape().as_list()
         target_shape     = [ self.batch_size, imgshape[1], imgshape[2], self.num_classes ]
-        self.upscore32   = self.upsample_layer( self.fuse_pool3, "upscore32", 8, target_shape ) # 8x upsampled prediction
+
+        self.upscore32   = self.upsample_layer( self.fuse_pool3, "upscore32", 4, target_shape ) # 8x upsampled prediction
        
         self.result      = self.upscore32 
         
@@ -220,7 +297,8 @@ class FCN(object):
         print("logits.shape", logits.get_shape().as_list())
         print("labels.shape", labels.shape)
         #loss_op         = tf.nn.sparse_softmax_cross_entropy_with_logits( logits = logits, labels = labels )
-        loss_op         = tf.nn.softmax_cross_entropy_with_logits( logits = logits, labels = labels )
+
+        loss_op         = tf.nn.softmax_cross_entropy_with_logits_v2( logits = logits, labels = labels )
         
         # If we have B x D x 1
         loss_op         = tf.reduce_sum( loss_op, axis = 1 )
@@ -231,6 +309,37 @@ class FCN(object):
         return loss_op
 
 
+def _activation_summary(x):
+    """Helper to create summaries for activations.
+    Creates a summary that provides a histogram of activations.
+    Creates a summary that measure the sparsity of activations.
+    Args:
+      x: Tensor
+    Returns:
+      nothing
+    """
+    # Remove 'tower_[0-9]/' from the name in case this is a multi-GPU training
+    # session. This helps the clarity of presentation on tensorboard.
+    tensor_name = x.op.name
+    # tensor_name = re.sub('%s_[0-9]*/' % TOWER_NAME, '', x.op.name)
+    tf.summary.histogram(tensor_name + '/activations', x)
+    tf.summary.scalar(tensor_name + '/sparsity', tf.nn.zero_fraction(x))
+
+
+def _variable_summaries(var):
+    """Attach a lot of summaries to a Tensor."""
+    if not tf.get_variable_scope().reuse:
+        name = var.op.name
+        logging.info("Creating Summary for: %s" % name)
+        with tf.name_scope('summaries'):
+            mean = tf.reduce_mean(var)
+            tf.summary.scalar(name + '/mean', mean)
+            with tf.name_scope('stddev'):
+                stddev = tf.sqrt(tf.reduce_sum(tf.square(var - mean)))
+            tf.summary.scalar(name + '/sttdev', stddev)
+            tf.summary.scalar(name + '/max', tf.reduce_max(var))
+            tf.summary.scalar(name + '/min', tf.reduce_min(var))
+            tf.summary.histogram(name, var)
 
 
 if __name__ == '__main__':
