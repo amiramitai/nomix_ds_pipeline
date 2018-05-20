@@ -1,0 +1,47 @@
+pipeline:
+  name: AudioEncoderPipeline
+  server:
+    host: 0.0.0.0
+    port: 8000
+
+  # profiler:
+  #   host: '127.0.0.1'
+  #   prefix: 'nomix_ds.'
+  stages:
+    - name: Dataset
+      type: MultiDatasetsStage
+      params:
+        - type: NomixDS
+          cache: T:\cache\nomixds.pickle
+          params: 
+            vocl_filename: T:\datasets\nomix_ds\ds_vocls
+            inst_filename: T:\datasets\nomix_ds\ds_inst
+            base_dir: T:\datasets\nomix_ds
+        - type: DSD100
+          cache: T:\cache\dsd100.pickle
+          params: 
+            path: T:\datasets\DSD100
+        - type: CCMixter
+          cache: T:\cache\ccmixter.pickle
+          params: 
+            path: T:\datasets\ccmixter
+        - type: Musdb18
+          cache: T:\cache\musdb18.pickle
+          params: 
+            path: T:\datasets\musdb18
+        - type: Quasi
+          cache: T:\cache\quasi.pickle
+          params: 
+            path: T:\datasets\quasi
+      # remotes:
+      #   - name: minizero
+    - name: ToSlice
+      type: FilenameToSliceRnn
+      params:
+        ssd_load_balance: true
+      # cache: 
+      #   filename: U:\cache\ImageToEncoding
+      #   seek_policy: ONE_SHOT
+      #   max_size: 2147483648
+      #   max_split: 50
+      # drop: true
