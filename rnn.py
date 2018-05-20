@@ -1,6 +1,3 @@
-import warnings as w
-w.simplefilter(action = 'ignore', category = FutureWarning)
-
 from six.moves import xrange
 import better_exceptions
 import datetime
@@ -12,86 +9,65 @@ import matplotlib.pyplot as plt
 import matplotlib as mpl
 import json
 import shutil
+import sys
 import traceback
 
-SEQ_LEN = 4
+import warnings as w
+w.simplefilter(action='ignore', category=FutureWarning)
 
 
 class RNNModel:
-    def __init__(self, x, y1, y2, keep_prob=None, n_rnn_layer=3, hidden_size=256, seq_len=4, training=True):
+    def __init__(self, x, y1, y2, params, keep_prob=None):
         self.x = x
         self.y1 = y1
         self.y2 = y2
-        self.seq_len = seq_len
-        self.training = training
         self.keep_prob = keep_prob
-        self.prob = 1.0
-        if training:
-            self.prob = 0.5
-        # Network
-        self.hidden_size = hidden_size
-        self.n_layer = n_rnn_layer
-        # self.net = tf.make_template('net', self._net)
-        # self()
-        self.logits = self._net()
+        self.params = params
+        self.prediction = self._net()
 
     def __call__(self):
         return self.net()
 
     def _net(self):
         # RNN and dense layers
-        # tf.contrib.rnn.NASCell(4*max_layers)
-        # from tensorflow.contrib.rnn import GRUCell, MultiRNNCell
-        # cells = [tf.contrib.rnn.LSTMCell(self.hidden_size) for _ in range(self.n_layer)]
-        cells = [tf.contrib.rnn.GRUCell(self.hidden_size) for _ in range(self.n_layer)]
-        # cells = [tf.contrib.rnn.NASCell(self.hidden_size) for _ in range(self.n_layer)]
+        cells = []
+        for _ in range(self.params['rnn_layers']):
+            cell = tf.contrib.rnn.GRUCell(self.params['hidden_size'])
+            cells.append(cell)
         rnn_layer = tf.contrib.rnn.MultiRNNCell(cells)
+
         if self.keep_prob is not None:
             rnn_layer = tf.contrib.rnn.DropoutWrapper(rnn_layer, output_keep_prob=self.keep_prob)
+
         with tf.variable_scope('RNN', initializer=tf.contrib.layers.xavier_initializer()):
             output_rnn, rnn_state = tf.nn.dynamic_rnn(rnn_layer, self.x, dtype=tf.float32)
-            # import pdb; pdb.set_trace()
-            # input_size = tf.shape(self.x)[2]
             input_size = self.x.shape[2].value
             y_hat_src1 = tf.layers.dense(inputs=output_rnn, units=input_size, activation=tf.nn.relu, name='y_hat_src1')
             y_hat_src2 = tf.layers.dense(inputs=output_rnn, units=input_size, activation=tf.nn.relu, name='y_hat_src2')
 
         # time-freq masking layer
-        # y_tilde_src1 = y_hat_src1 / (y_hat_src1 + y_hat_src2 + np.finfo(float).eps) * self.x
-        # y_tilde_src2 = y_hat_src2 / (y_hat_src1 + y_hat_src2 + np.finfo(float).eps) * self.x
+        y_tilde_src1 = y_hat_src1 / (y_hat_src1 + y_hat_src2 + np.finfo(float).eps) * self.x
+        y_tilde_src2 = y_hat_src2 / (y_hat_src1 + y_hat_src2 + np.finfo(float).eps) * self.x
 
-        # src_mask1 = y_hat_src1 / (y_hat_src1 + y_hat_src2 + np.finfo(float).eps) * self.x
-        # src_mask2 = y_hat_src2 / (y_hat_src1 + y_hat_src2 + np.finfo(float).eps) * self.x
+        return y_tilde_src1, y_tilde_src2
 
-        return y_hat_src1, y_hat_src2
-
-    # def loss(self):
-    #     pred_y_src1, pred_y_src2 = self.logits
-    #     return tf.reduce_mean(tf.square(self.y1 - pred_y_src1) + tf.square(self.y2 - pred_y_src2), name='loss')
-    
     def loss(self):
-        y_hat_src1, y_hat_src2 = self.logits
-        return tf.reduce_mean(tf.square(self.y1 - self.x*y_hat_src1) + tf.square(self.y2 - self.x*y_hat_src2), name='loss')
+        pred_y_src1, pred_y_src2 = self.prediction
+        return tf.reduce_mean(tf.square(self.y1 - pred_y_src1) + tf.square(self.y2 - pred_y_src2), name='loss')
 
-    # def acc(self):
-    #     sample_shape = (-1, self.seq_len, audio.MELS)
-    #     reshaped = tf.reshape(self.logits, (2, *sample_shape))
-    #     pred_y_src1, pred_y_src2 = tf.split(reshaped, 2, axis=0)
-    #     pred_y_src1 = tf.reshape(pred_y_src1, sample_shape)
-    #     pred_y_src2 = tf.reshape(pred_y_src2, sample_shape)
-    #     total_pixels = tf.cast(tf.multiply(tf.reduce_prod(tf.shape(reshaped)), 1), tf.float32)
-    #     err_pixel_sum = tf.reduce_sum(tf.abs(self.y1 - pred_y_src1) + tf.abs(self.y2 - pred_y_src2))
-    #     return tf.multiply(tf.subtract(1.0, tf.divide(err_pixel_sum, total_pixels)), 100.0, name='accuracy')
-    
-    def acc(self):
-        sample_shape = (-1, self.seq_len, audio.MELS)
-        reshaped = tf.reshape(self.logits, (2, *sample_shape))
+    def accuracy(self):
+        sample_shape = (-1, self.params['seq_len'], audio.MELS)
+        reshaped = tf.reshape(self.prediction, (2, *sample_shape))
         pred_y_src1, pred_y_src2 = tf.split(reshaped, 2, axis=0)
         pred_y_src1 = tf.reshape(pred_y_src1, sample_shape)
         pred_y_src2 = tf.reshape(pred_y_src2, sample_shape)
         total_pixels = tf.cast(tf.multiply(tf.reduce_prod(tf.shape(reshaped)), 1), tf.float32)
         err_pixel_sum = tf.reduce_sum(tf.abs(self.y1 - self.x*pred_y_src1) + tf.abs(self.y2 - self.x*pred_y_src2))
         return tf.multiply(tf.subtract(1.0, tf.divide(err_pixel_sum, total_pixels)), 100.0, name='accuracy')
+
+    def identifier(self):
+        template = 'rl{rnn_layers}hl{hidden_size}sl{seq_len}'.format(**self.params)
+        return template
 
 
 def average_gradients(tower_grads):
@@ -129,8 +105,9 @@ def average_gradients(tower_grads):
         average_grads.append(grad_and_var)
     return average_grads
 
-#https://github.com/tensorflow/tensorflow/issues/13434
-def train(test_num, devices, tip, params=None, load_prev=True, should_save=True):
+
+def train(test_num, devices, tip, params=None):
+    # https://github.com/tensorflow/tensorflow/issues/13434
     # with tf.variable_scope('params') as params:
     #     pass
 
@@ -142,79 +119,67 @@ def train(test_num, devices, tip, params=None, load_prev=True, should_save=True)
             batch_size=256,
             learning_rate=1e-3,
             seq_len=4,
+            model_version=3,
+            should_save=True,
+            load_prev=True
         )
 
     IM_HEIGHT = audio.MELS
     IM_WIDTH = audio.MELS
     IM_CHANNEL = 1
-    batch_size = 256
     iteration = 0
     min_loss = 1e10
-    params_string = 'rl{rnn_layers}-hl{hidden_size}-sl{seq_len}-bs{batch_size}-lr{learning_rate:1.0e}'.format(**params)
     checkpoint_base = 'D:\\checkpoint_rnn'
-    startup_file_name = 'startup.rnn.{}.json'.format(params_string)
     models_to_keep = 3
     models_history = []
     summary_steps = 10
     im_summary_steps = 25
     checkpoint_steps = 250
-    model_version = 2
-    learning_rate = 1e-3
     num_classes = 2
-    time_str = datetime.datetime.now().strftime('%m-%d--%H%M%S')
-    log_string = 'logs/rnn-{}/{}'.format(model_version, params_string)
 
     config = tf.ConfigProto()
     config.gpu_options.allow_growth = True
     config.allow_soft_placement = True
     sess = tf.Session(config=config)
 
-    # im = tf.placeholder(tf.float32, [batch_size, IM_HEIGHT, IM_WIDTH, IM_CHANNEL])
-    # 19 + unlabeled area(plus ignored labels)
-    # gt = tf.placeholder(tf.float32, [batch_size, IM_HEIGHT, IM_WIDTH, 2])
     x_mixed = tf.placeholder(tf.float32, shape=(None, None, audio.MELS), name='x_mixed')
     y_src1 = tf.placeholder(tf.float32, shape=(None, None, audio.MELS), name='y_src1')
     y_src2 = tf.placeholder(tf.float32, shape=(None, None, audio.MELS), name='y_src2')
     keep_prob = tf.placeholder(tf.float32, shape=None, name='keep_prob')
     global_step = tf.Variable(0, trainable=False)
     summary = []
-    
+
     x_split = tf.split(x_mixed, len(devices))
     y1_split = tf.split(y_src1, len(devices))
     y2_split = tf.split(y_src2, len(devices))
 
-    writer = tf.summary.FileWriter(log_string)
-
-    all_logits = []
+    all_prediction = []
     all_loss = []
     all_acc = []
-    all_preds = []
-    eval_logits = []
     tower_grads = []
-    control_y1 = tf.placeholder(tf.float32, shape=(1, audio.MELS, audio.MELS, 4), name='control_y1')
-    control_y2 = tf.placeholder(tf.float32, shape=(1, audio.MELS, audio.MELS, 4), name='control_y2')
+    control_y1 = tf.placeholder(tf.float32, shape=(1, audio.FRAMES, audio.MELS, 4), name='control_y1')
+    control_y2 = tf.placeholder(tf.float32, shape=(1, audio.FRAMES, audio.MELS, 4), name='control_y2')
     s1 = tf.summary.image('s_control_y1', control_y1)
     s2 = tf.summary.image('s_control_y2', control_y2)
     im_summaries = tf.summary.merge([s1, s2])
 
-    learning_rate = tf.train.exponential_decay(learning_rate, global_step, 100000, 0.96, staircase=True)
+    learning_rate = tf.train.exponential_decay(params['learning_rate'], global_step, 100000, 0.96, staircase=True)
     optimizer = tf.train.AdamOptimizer(learning_rate)
+    identifier = ''
     with tf.variable_scope(tf.get_variable_scope()):
         for i, (device, x, y1, y2) in enumerate(zip(devices, x_split, y1_split, y2_split)):
             with tf.device(device):
                 with tf.name_scope('tower_%d' % i) as scope:
-                    print(i, scope)
-                    nrl = params['rnn_layers']
-                    hs = params['hidden_size']
-                    net = RNNModel(x, y1, y2, keep_prob, n_rnn_layer=nrl, hidden_size=hs, seq_len=params['seq_len'])
+                    net = RNNModel(x, y1, y2, params, keep_prob)
+                    identifier = net.identifier()
                     grads = optimizer.compute_gradients(net.loss())
                     tf.get_variable_scope().reuse_variables()
                     all_loss.append(net.loss())
-                    all_acc.append(net.acc())
+                    all_acc.append(net.accuracy())
                     tower_grads.append(grads)
-                    all_logits.append(net.logits)
-    
-    vars_ = tf.trainable_variables()    
+                    all_prediction.append(net.prediction)
+
+    vars_ = tf.trainable_variables()
     loss = tf.reduce_mean(all_loss)
     acc = tf.reduce_mean(all_acc)
     grads_ = average_gradients(tower_grads)
@@ -240,11 +205,15 @@ def train(test_num, devices, tip, params=None, load_prev=True, should_save=True)
                        tf.local_variables_initializer())
 
     sess.run(init_op)
-    
+
+    startup_file_name = 'startup.rnn.{}.json'.format(identifier)
+    log_string = 'logs/rnn-{}/{}'.format(params['model_version'], identifier)
+    writer = tf.summary.FileWriter(log_string)
+
     try:
         if load_prev:
             print('[+] loading startup.json')
-            startup = json.load(open('startup.rnn.json', 'r'))
+            startup = json.load(open(startup_file_name, 'r'))
             print('[+] loading path:', startup['path'])
             state = json.load(open(startup['path'], 'r'))
             print('[+] loading checkpoint:', state['checkpoint_path'])
@@ -257,7 +226,7 @@ def train(test_num, devices, tip, params=None, load_prev=True, should_save=True)
 
             latest = tf.train.latest_checkpoint(last_checkpoint)
             s.restore(sess, latest)
-            
+
             # min_loss = state['min_loss']
             checkpoint_path = state['checkpoint_path']
             sess.run(tf.assign(global_step, state['iteration']))
@@ -317,10 +286,6 @@ def train(test_num, devices, tip, params=None, load_prev=True, should_save=True)
         src = np.reshape(src, (num_wav, -1, freq))
         src = src.transpose(0, 2, 1)
         return src
-    
-    def arr_and_to_batch(lst):
-        import pdb; pdb.set_trace()
-        return spec_to_batch(np.array(lst))
 
     def get_data_from_tip(tip, batch_size):
         features = []
@@ -330,18 +295,20 @@ def train(test_num, devices, tip, params=None, load_prev=True, should_save=True)
         for i in range(batch_size):
             data = tip.get()
             d, f, l1, l2 = data
-            features.append(f.reshape((IM_WIDTH, IM_HEIGHT, 1)))
+            features.append(f.reshape((audio.FRAMES, audio.MELS, 1)))
             labels1.append(l1)
             labels2.append(l2)
             descriptions.append(d)
         return descriptions, np.array(features), np.array(labels1), np.array(labels2)
-    
+
     control_img = np.load('control.npy')
 
+
+    batch_size = params['batch_size']
     while True:
         descriptions, features, labels1, labels2 = get_data_from_tip(tip, batch_size)
         # print('data: f min {} max {}, l1 min {} max {}, l2 min {} max {}'.format(features.min(), features.max(), labels1.min(), labels1.max(), labels2.min(), labels2.max()))
-        
+
         try:
             with np.errstate(all='raise'):
                 for i in range(5):
@@ -363,9 +330,9 @@ def train(test_num, devices, tip, params=None, load_prev=True, should_save=True)
             open("numpy_warns.log", 'a').write('------------------------------------')
             continue
 
-        features = features.reshape((batch_size, IM_HEIGHT, IM_WIDTH))
-        labels1 = labels1.reshape((batch_size, IM_HEIGHT, IM_WIDTH))
-        labels2 = labels2.reshape((batch_size, IM_HEIGHT, IM_WIDTH))
+        features = features.reshape((batch_size, audio.MELS, audio.FRAMES))
+        labels1 = labels1.reshape((batch_size, audio.MELS, audio.FRAMES))
+        labels2 = labels2.reshape((batch_size, audio.MELS, audio.FRAMES))
 
         # import pdb; pdb.set_trace()
         to_run = [train_op, summary, loss, global_step, accuracy]
@@ -383,20 +350,20 @@ def train(test_num, devices, tip, params=None, load_prev=True, should_save=True)
             writer.add_summary(_summary, iteration)
 
         if iteration % im_summary_steps == 0:
-            to_run = all_logits[0]
+            to_run = all_prediction[0]
             feed_dict = {
                 x_mixed: spec_to_batch(np.array([control_img] * len(devices))),
                 keep_prob: 1.0
             }
             out_control_y1, out_control_y2 = sess.run(to_run, feed_dict)
-            
-            out_control_y1 = batch_to_spec(out_control_y1, 1)[:,:,:224].reshape((224, 224))
-            out_control_y2 = batch_to_spec(out_control_y2, 1)[:,:,:224].reshape((224, 224))
+
+            out_control_y1 = batch_to_spec(out_control_y1, 1)[:, :, :audio.FRAMES].reshape((audio.MELS, audio.FRAMES))
+            out_control_y2 = batch_to_spec(out_control_y2, 1)[:, :, :audio.FRAMES].reshape((audio.MELS, audio.FRAMES))
 
             cm_hot = mpl.cm.get_cmap('hot')
             # import pdb; pdb.set_trace()
-            out_control_y1 = np.uint8(cm_hot(out_control_y1) * 255).reshape((1, 224, 224, 4))
-            out_control_y2 = np.uint8(cm_hot(out_control_y2) * 255).reshape((1, 224, 224, 4))
+            out_control_y1 = np.uint8(cm_hot(out_control_y1) * 255).reshape((1, audio.MELS, audio.FRAMES, 4))
+            out_control_y2 = np.uint8(cm_hot(out_control_y2) * 255).reshape((1, audio.MELS, audio.FRAMES, 4))
 
             feed_dict = {
                 control_y1: out_control_y1,
@@ -406,20 +373,14 @@ def train(test_num, devices, tip, params=None, load_prev=True, should_save=True)
             writer.add_summary(s, iteration)
 
         if iteration % checkpoint_steps == 0 and should_save:
-            if os.path.isfile('nomix_pdb'):
-                import pdb
-                pdb.set_trace()
-            # print('\t\tNew Best Loss!')
-            # best_loss = train_loss
             timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H%M%S")
-            
+
             checkpoint_dir = os.path.join(checkpoint_base, '{}-{}'.format(test_num, timestamp))
             checkpoint_path = os.path.join(checkpoint_dir, 'model.ckpt')
             print('\t\tSaving model to:' + checkpoint_path)
             saver.save(sess, checkpoint_path, global_step=global_step)
             state = {
                 'iteration': int(iteration),
-                # 'val_acc': float(val_acc),
                 'min_loss': int(min_loss),
                 'checkpoint_path': checkpoint_path,
                 'log_string': log_string,
@@ -447,7 +408,8 @@ def train(test_num, devices, tip, params=None, load_prev=True, should_save=True)
     print('[+] done!')
     # iteration += 1
 
-def train_parallel(devices, tips):
+
+def train_parallel(devices, tip):
     load_prev = False
     should_save = True
     tests = []
@@ -465,61 +427,53 @@ def train_parallel(devices, tips):
     #                         learning_rate=lr
     #                     ))
     tests.append(dict(
-                max_iteration=1000000,
-                seq_len=4,
-                hidden_size=512,
-                rnn_layers=3,
-                batch_size=128,
-                learning_rate=1e-3
-            ))
-    tests.append(dict(
-                max_iteration=1000000,
-                seq_len=16,
-                hidden_size=512,
-                rnn_layers=3,
-                batch_size=128,
-                learning_rate=1e-3
-            ))
+        max_iteration=1000000,
+        seq_len=4,
+        hidden_size=512,
+        rnn_layers=3,
+        batch_size=2,
+        learning_rate=1e-3,
+        model_version=3,
+        should_save=True,
+        load_prev=True
+    ))
+    # tests.append(dict(
+    #     max_iteration=1000000,
+    #     seq_len=16,
+    #     hidden_size=512,
+    #     rnn_layers=3,
+    #     batch_size=128,
+    #     learning_rate=1e-3
+    # ))
     i = 0
     # tests.pop(0)
     # tests.pop(0)
+    active = []
     import pprint
     while tests:
         try:
-            test1 = tests.pop(0)
-            print('[+] going with the following test:')
-            pprint.pprint(test1)
-            t1 = Thread(target=train, args=(i, ['/gpu:0'], tips[0], test1, load_prev, should_save))
-            t1.daemon = True
-            t1.start()
-            if not tests:
-                t1.join()
-                continue
-            i += 1
-            test2 = tests.pop(0)
-            print('[+] going with the following test:')
-            pprint.pprint(test2)
-            t2 = Thread(target=train, args=(i, ['/gpu:1'], tips[1], test2, load_prev, should_save))
-            t2.daemon = True
-            t2.start()
-
-            try:
-                t1.join()
-                t2.join()
-            except KeyboardInterrupt:
-                print('[+] keyint 1.. skipping')
-                t1.join()
-                t2.join()
-                pass
-            i += 1
+            for d in devices:
+                test = tests.pop(0)
+                print('[+] going with the following test:', d)
+                pprint.pprint(test)
+                t = Thread(target=train, args=(i, [d], tip, test))
+                t.daemon = True
+                t.start()
+                active.append(t)
+                i += 1
+            for t in active:
+                t.join()
+            active = []
         except KeyboardInterrupt:
             print('[+] keyint 2')
         except:
             raise
 
+
 if __name__ == "__main__":
     import tensorflow as tf
-    from tensorflow.contrib.rnn import GRUCell, MultiRNNCell
+    # from tensorflow.contrib.rnn import GRUCell, MultiRNNCell
+    from tensorflow.python.client import device_lib
     import numpy as np
     from pipeline import Pipeline
     from imgaug import augmenters as iaa
@@ -528,28 +482,43 @@ if __name__ == "__main__":
     import audio
     # from multiprocessing.pool import ThreadPool
     from threading import Thread
-    with open('configs/win_client.rnn.yaml') as f:
-        config = yaml.safe_load(f)
+
+    if sys.platform == 'darwin':
+        with open('configs/mac_client.yaml') as f:
+            config = yaml.safe_load(f)
+    else:
+        with open('configs/win_client.rnn.yaml') as f:
+            config = yaml.safe_load(f)
     amp = Pipeline(config['pipeline'])
     amp.run()
     amp.keepalive(block=False)
     tip = amp._get_tip_queue()
-    tip2 = amp._stages[-1].output_queue2
-    tips = [tip, tip]
-    devices = ['/gpu:0', '/gpu:1']
-    
+
+    devices = device_lib.list_local_devices()
+    gpus = []
+    cpus = []
+    for d in devices:
+        if 'gpu' in d.name:
+            gpus.append(d.name)
+        elif 'cpu' in d.name:
+            cpus.append(d.name)
+
+    if gpus:
+        devices = gpus
+    else:
+        devices = cpus
+
     load_prev = True
     should_save = True
     params = dict(
         max_iteration=10000000,
-        hidden_size=1024,
-        rnn_layers=6,
-        batch_size=256,
+        hidden_size=256,
+        rnn_layers=3,
+        batch_size=1,
         learning_rate=1e-3,
-        seq_len=16,
+        seq_len=4,
     )
 
     # train(0, devices, tip, params, load_prev=load_prev, should_save=should_save)
-    train_parallel(devices, tips)
+    train_parallel(devices, tip)
     print('[+] done all')
-        

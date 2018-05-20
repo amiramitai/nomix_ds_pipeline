@@ -80,28 +80,13 @@ class NomixModel:
 
     @classmethod
     def create_inputs(cls, splits):
-        raise NotImplementedError
+        x_mixed = tf.placeholder(tf.float32, shape=(None, None, audio.MELS), name='x_mixed')
+        y_src1 = tf.placeholder(tf.float32, shape=(None, None, audio.MELS), name='y_src1')
+        y_src2 = tf.placeholder(tf.float32, shape=(None, None, audio.MELS), name='y_src2')
     
     @classmethod
-    def create_inputs(cls, splits):
+    def create_outputs(cls, splits):
         raise NotImplementedError
-
-    @classmethod
-    def on_train_step(cls):
-        # todo this tomorrow
-
-        
-
-        
-
-class NomixTower:
-    def __init__(self):
-        self.model = None
-
-class NomixSummary:
-    def __init__(self):
-        self.steps = 0
-        self.summary = []
 
 
 def train(name, devices, tip, params, model_cls):
@@ -143,49 +128,45 @@ def train(name, devices, tip, params, model_cls):
     writer = tf.summary.FileWriter(log_string)
 
     all_loss = []
-    all_acc = []
-    all_preds = []
-    eval_logits = []
-    tower_grads = []
+    all_accuracy = []
+    all_prediction = []
+    all_gradient = []
     im_summaries = tf.summary.merge([s1, s2])
 
     optimizer = model_cls.create_optimizer(params)
     models = []
+    summary = []
     with tf.variable_scope(tf.get_variable_scope()):
         for i in range(len(devices)):
             with tf.device(devices[i]):
                 model = model_cls(i, params, x_split[i], y_split[i])
                 models.append(model)
                 tf.get_variable_scope().reuse_variables()
-    
-    # all_loss.append(net.loss)
-    # all_acc.append(net.accuracy)
-    # tower_grads.append(optimizer.compute_gradients(net.loss))
-    # all_preds.append(net.prediction)
-    
-    vars_ = tf.trainable_variables()
-    
-    # preds = tf.concat(all_preds, axis=0)
-    # logits = tf.concat(eval_logits, axis=0)
-    # summary = []
-    # for i, tower in enumerate(towers):
-    #     with tf.name_scope('tower_%d' % i) as scope:
-    #         summary.extend(tower.model.get_summary())
-    #         grad_norm = tf.norm(grad[0][0])
-    #         grad_sum = NomixSummary()
-    #         grad_sum.summary = tf.summary.scalar('gradient', grad_norm)
-    #         summary.append()
+                loss = model.loss
+                all_loss.append(loss)
+                grad = optimizer.compute_gradients(loss)
+                all_gradient.append(grad)
+                accuracy = model.accuracy
+                all_accuracy.append(accuracy)
+                all_prediction.append(model.prediction)
+            with tf.name_scope('tower_%d' % i) as scope:
+                summary.append(tf.summary.scalar('loss', loss))
+                summary.append(tf.summary.scalar('accuracy', accuracy))
+                grad_norm = tf.norm(grad[0][0])
+                summary.append(tf.summary.scalar('gradient', grad_norm))
 
+    vars_ = tf.trainable_variables()
+    loss = tf.reduce_mean(all_loss)
+    accuracy = tf.reduce_mean(all_accuracy)
+    grad_avg = average_gradients(all_gradient)
+    train_op = optimizer.apply_gradients(grad_avg, global_step=global_step)
     
-    # summary.extend(model_cls.class_summary([t.model for t in towers]))
-    # with tf.name_scope('all'):
-    #     summary.append(tf.summary.scalar('loss', loss))
-    #     grad_norm = tf.norm(grads_[0][0])
-    #     summary.append(tf.summary.scalar('gradient', grad_norm))
-    #     # total_pixels = np.prod(gt.get_shape()).value / tf.shape(split)[0]
-    #     accuracy = acc
-    #     summary.append(tf.summary.scalar('accuracy', accuracy))
-    # summary = tf.summary.merge(summary)
+    with tf.name_scope('all'):
+        summary.append(tf.summary.scalar('loss', loss))
+        grad_norm = tf.norm(grads_[0][0])
+        summary.append(tf.summary.scalar('gradient', grad_norm))
+        summary.append(tf.summary.scalar('accuracy', accuracy))
+    summary = tf.summary.merge(summary)
 
     init_op = tf.group(tf.global_variables_initializer(),
                        tf.local_variables_initializer())

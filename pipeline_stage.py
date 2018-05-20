@@ -7,8 +7,7 @@ import queue
 from myqueue import MyQueue
 from data import NomixDS, MultiDatasets, MixWithVocalResult, InstWithVocalResult, FCN_VOC_THRESHOLD
 
-from audio import get_image_with_audio, to_audiosegment, get_rand_audio_patch, \
-                  get_mel_filename, get_offset_range_patch
+from audio import to_audiosegment, get_audio_patch, get_mel_filename, get_offset_range_patch
 
 from exceptions import NoThreadSlots
 import traceback
@@ -41,7 +40,7 @@ class PipelineStage:
         with self._thread_alloc_lock:
             if self._threads_alloc.value < 1:
                 raise NoThreadSlots(self.name)
-            
+
             self._threads_occup.value += 1
             # self._threads_alloc.value -= 1
 
@@ -68,10 +67,6 @@ class PipelineStage:
     @property
     def output_queue(self):
         return self._output_queue
-    
-    @property
-    def output_queue2(self):
-        return self._output_queue2
 
     @property
     def input_queue(self):
@@ -113,7 +108,7 @@ class DatasetStage(PipelineStage):
         # print('[+] v = next(self._vocls)')
         v = next(self._vocls)
         if not isinstance(v, MixWithVocalResult):
-            i = next(self._insts)    
+            i = next(self._insts)
             v = InstWithVocalResult(v, i)
         # print('[+] i = next(self._insts)')
         i = next(self._insts)
@@ -150,6 +145,7 @@ class AudioJoinStage(PipelineStage):
             self.output_queue.put((vocl, 1))
             self.output_queue.put((inst, 0))
 
+
 class HasNanException(Exception):
     pass
 
@@ -158,7 +154,7 @@ class FilenameToSlice(PipelineStage):
     def __init__(self, config, context):
         super().__init__(config, context)
         self._max_parallel = 6
-    
+
     def write(self, data):
         try:
             with np.errstate(all='raise'):
@@ -192,7 +188,7 @@ class FilenameToSlice(PipelineStage):
         if isinstance(data, InstWithVocalResult):
             self.output_queue.put((data.desc(), data.mix(), data.get_label()))
             return
-        
+
         params, label = data
         filename, offset, _range = params
 
@@ -216,18 +212,17 @@ class FilenameToSliceFcn(FilenameToSlice):
         if isinstance(data, InstWithVocalResult):
             self.output_queue.put((data.desc(), data.mix(), data.get_fcn_label()))
             return
-        
+
         params, label = data
         filename, offset, _range = params
 
-
         aud = get_offset_range_patch(filename, offset, _range)
-        
+
         if label == [1, 0]:
             voc = np.zeros((aud.shape[0], aud.shape[1], 1))
             others = (aud > FCN_VOC_THRESHOLD).astype('float')
             others = others.reshape((aud.shape[0], aud.shape[1], 1))
-            label = np.concatenate((others, voc), axis=2) 
+            label = np.concatenate((others, voc), axis=2)
         else:
             voc = (aud > FCN_VOC_THRESHOLD).astype('float')
             others = np.zeros(voc.shape)
@@ -253,19 +248,19 @@ class FilenameToSliceFrrn(FilenameToSlice):
         if isinstance(data, InstWithVocalResult):
             self.output_queue.put((data.desc(), data.mix(), data.get_frrn_label()))
             return
-        
+
         params, label = data
         filename, offset, _range = params
 
         aud = get_offset_range_patch(filename, offset, _range)
-        
+
         if label == [1, 0]:
             voc = np.zeros((aud.shape[0], aud.shape[1], 1))
             # others = (aud > FCN_VOC_THRESHOLD).astype('float')
             # others = others.reshape((aud.shape[0], aud.shape[1], 1))
             voc = (voc > FCN_VOC_THRESHOLD).astype('int32')
             label = voc
-            # label = np.concatenate((others, voc), axis=2) 
+            # label = np.concatenate((others, voc), axis=2)
         else:
             # voc = (aud > FCN_VOC_THRESHOLD).astype('float')
             voc = aud
@@ -281,6 +276,7 @@ class FilenameToSliceFrrn(FilenameToSlice):
 
         self.output_queue.put((desc, aud, label))
 
+
 class FilenameToSliceFrrn2(FilenameToSlice):
     def _safe_write(self, data):
         # print(data)
@@ -290,21 +286,21 @@ class FilenameToSliceFrrn2(FilenameToSlice):
         if isinstance(data, InstWithVocalResult):
             self.output_queue.put((data.desc(), data.mix(), data.get_frrn2_label()))
             return
-        
+
         params, label = data
         filename, offset, _range = params
 
         aud = get_offset_range_patch(filename, offset, _range)
-        
+
         if label == [1, 0]:
             others = aud.reshape((aud.shape[0], aud.shape[1], 1))
             voc = np.zeros((aud.shape[0], aud.shape[1], 1))
-            label = np.concatenate((others, voc), axis=2) 
+            label = np.concatenate((others, voc), axis=2)
         else:
             # voc = (aud > FCN_VOC_THRESHOLD).astype('float')
             others = np.zeros((aud.shape[0], aud.shape[1], 1))
             voc = aud.reshape((voc.shape[0], voc.shape[1], 1))
-            label = np.concatenate((others, voc), axis=2) 
+            label = np.concatenate((others, voc), axis=2)
             # voc = (voc > FCN_VOC_THRESHOLD).astype('int32')
             # label = voc
 
@@ -326,21 +322,21 @@ class FilenameToSliceRnn(FilenameToSlice):
         if isinstance(data, InstWithVocalResult):
             self.output_queue.put((data.desc(), data.mix(), *data.get_rnn_label()))
             return
-        
+
         params, label = data
         filename, offset, _range = params
 
         aud = get_offset_range_patch(filename, offset, _range)
-        
+
         if label == [1, 0]:
             y1 = aud.reshape((aud.shape[0], aud.shape[1], 1))
             y2 = np.zeros((aud.shape[0], aud.shape[1], 1))
-            # label = np.concatenate((others, voc), axis=2) 
+            # label = np.concatenate((others, voc), axis=2)
         else:
             # voc = (aud > FCN_VOC_THRESHOLD).astype('float')
             y1 = np.zeros((aud.shape[0], aud.shape[1], 1))
             y2 = aud.reshape((voc.shape[0], voc.shape[1], 1))
-            # label = np.concatenate((others, voc), axis=2) 
+            # label = np.concatenate((others, voc), axis=2)
             # voc = (voc > FCN_VOC_THRESHOLD).astype('int32')
             # label = voc
 
@@ -351,7 +347,6 @@ class FilenameToSliceRnn(FilenameToSlice):
         desc = str(params)
 
         self.output_queue.put((desc, aud, y1, y2))
-        # self.output_queue2.put((desc, aud, y1, y2))
 
 
 class FilenameToAudio(PipelineStage):
@@ -361,38 +356,8 @@ class FilenameToAudio(PipelineStage):
         if isinstance(filename, tuple):
             filename, _range = filename
 
-        aud = get_rand_audio_patch(filename, _range)
+        aud = get_audio_patch(filename, _range)
         self.output_queue.put((aud, label))
-    
-
-class AudioToImageStage(PipelineStage):
-    def write(self, data):
-        image = get_image_with_audio(*data)
-        self.output_queue.put(image)
-
-
-class ImageToEncodingStage(PipelineStage):
-    def __init__(self, config, context):
-        super().__init__(config, context)
-        self._max_parallel = 1
-
-    def in_proc_init(self):
-        import tensorflow as tf
-        from vgg16 import Vgg16
-        self.sess = tf.Session()
-        imgs = tf.placeholder(tf.float32, [None, 224, 224, 3])
-        weights = self._params.get('weights', 'vgg16_weights.npz')
-        self.vgg = Vgg16(imgs,
-                         weights,
-                         self.sess,
-                         weights_to_load_hack=28)
-    
-    def write(self, data):
-        img, label = data
-        img = np.repeat(img.reshape(224, 224, 1), 3, axis=2)
-        embed = self.sess.run(self.vgg.fc1,
-                                feed_dict={self.vgg.imgs: [img]})[0]
-        self.output_queue.put((embed, label))
 
 
 class PrinterStage(PipelineStage):

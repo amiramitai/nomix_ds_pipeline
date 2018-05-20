@@ -15,7 +15,9 @@ from exceptions import BadAudioFile
 
 FFT = 2048
 HOP_LENGTH = int(FFT / 4)
-MELS = 224
+# MELS = 224
+MELS = 1024
+FRAMES = 224
 SAMPLE_RATE = 44100
 POWER = 2.0
 SPLIT_HOP_LENGTH = int(MELS / 8)  # Cols
@@ -170,10 +172,24 @@ def get_rand_loudness_range(audio_filename):
 
 
 def get_mel_filename(audio_filename):
-    return os.path.splitext(audio_filename)[0] + '.mel'
+    if MELS == 224:
+        return os.path.splitext(audio_filename)[0] + '.mel'
+
+    return '{}.{}.mel'.format(os.path.splitext(audio_filename)[0], MELS)
 
 
-def get_mel_spect(mel_filename, _range, dtype=np.float32):
+def get_mel_spect(audio_filename, _range, dtype=np.float32):
+    mel_filename = get_mel_filename(audio_filename)
+
+    if not os.path.isfile(mel_filename):
+        # get the spect
+        print('[+] getting audio patch')
+        patch = get_audio_patch(audio_filename, _range)
+        print('[+] get image with audio')
+        get_image_with_audio(audio_filename)
+        print('[+] done')
+        return patch
+
     with open(mel_filename, 'rb') as f:
         itemsize = np.dtype(dtype).itemsize
         start, end = _range
@@ -233,12 +249,11 @@ def get_offset_range_patch(audio_filename, offset, _range=None, mix_filename=Non
         path = 3
         _range = get_range_with_offset_and_ranges(offset, _range)
 
-    if mix_filename:
-        mel_filename = get_mel_filename(mix_filename)
-    else:
-        mel_filename = get_mel_filename(audio_filename)
+    filename = mix_filename
+    if not filename:
+        filename = audio_filename
     # print(mel_filename, _range)
-    res = get_mel_spect(mel_filename, _range)
+    res = get_mel_spect(filename, _range)
     # res = mel_spect.T[_range[0]:_range[1]].T
     if res.shape == (mels, cols):
         return res
@@ -253,7 +268,7 @@ def get_offset_range_patch(audio_filename, offset, _range=None, mix_filename=Non
     return patch
 
 
-def get_rand_audio_patch(filename, _range=None):
+def get_audio_patch(filename, _range=None):
     if not _range:
         _range = get_non_silent_range(filename)
     
@@ -266,32 +281,12 @@ def get_rand_audio_patch(filename, _range=None):
                          offset=sample_loc/1000.0,
                          duration=toread)
     if y.ndim > 1:
-        y = random.choice(y)
+        # y = random.choice(y)
+        y = y[0]
     return y
 
-    CPRECISION = 0.01
-    toread = math.ceil(((MELS * HOP_LENGTH) / SAMPLE_RATE) / CPRECISION) * CPRECISION
-    for i in range(10):
-        loc = random.uniform(0, dur-toread)
-        af.seek(loc)
-        y = af.read(toread)
-        if y.ndim == 2:
-            y = y[0]
 
-        if len(y) < MELS * HOP_LENGTH:
-            print('[+] get_audio_patch_with_params: got too short for {}/y:{}/loc:{}/dur:{}'.format(filename, len(y), format_secs(loc), dur))
-            continue
-        rms = librosa.feature.rmse(y=y) 
-        # if rms.mean() > 0.05:
-        #     return y
-        if sum(rms[0]) > 5.0:
-            # print(len(y), filename)
-            return AudioPatch(y, filename, loc)
-    
-    raise BadAudioFile()
-
-
-def get_image_with_audio(y, label):
+def get_image_with_audio(y):
     mel = librosa.feature.melspectrogram(y=y,
                                          sr=SAMPLE_RATE,
                                          n_mels=MELS,
@@ -303,7 +298,7 @@ def get_image_with_audio(y, label):
     image = mel_db.T[0:MELS]
     image = (image.clip(-80, 0) + 80) / 80
     image.reshape((MELS, MELS))
-    return image, label
+    return image
 
 
 def to_audiosegment(arr):

@@ -44,25 +44,12 @@ pipeline:
             path: /Volumes/t$/datasets/quasi
       # remotes:
       #   - name: minizero
-    - name: ToAudio
-      type: FilenameToAudio
-    - name: ToImage
-      type: AudioToImageStage
-      # remotes:
-      #   - name: minizero
-      # cache: 
-      #   filename: ../cache/AudioToImage
-      #   seek_policy: ONE_SHOT
-      #   max_size: 2147483648
-      #   max_split: 50
-    - name: ToEncoding
-      type: ImageToEncodingStage
-      params:
-        weights: ../vgg16_weights.npz
+    - name: ToSlice
+      type: FilenameToSliceRnn
       # cache: 
       #   filename: ../cache/ImageToEncoding
       #   seek_policy: ONE_SHOT
-      drop: true
+      # drop: true
       
         # max_size: 2147483648
         # max_split: 50
