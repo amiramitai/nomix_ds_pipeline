@@ -13,7 +13,8 @@ import numpy as np
 from exceptions import BadAudioFile
 
 
-FFT = 2048
+FFT = 224 * 2
+ROWS = (FFT // 2) + 1
 HOP_LENGTH = int(FFT / 4)
 # MELS = 224
 MELS = 1024
@@ -105,7 +106,7 @@ def get_non_silent_range(filename):
     dur = get_duration(filename)
     jfilename = os.path.splitext(filename)[0] + '.json'
     j = json.load(open(jfilename))
-    silence_ranges = j['silence']
+    silence_ranges = j['silence_mask_ranges']
     start = 0
     end = dur
     non_silent_ranges = []
@@ -125,9 +126,9 @@ def get_non_silent_range(filename):
 
 def pick_within_range(start, end):
     # if it's more then we need, pick a random start position
-    if (end - start) > MELS:
-        pos = random.randint(start, end-MELS)
-        return pos, pos+MELS
+    if (end - start) > FRAMES:
+        pos = random.randint(start, end-FRAMES)
+        return pos, pos+FRAMES
 
     # it's just between the minimum requirement and max requirement
     return start, end
@@ -178,17 +179,32 @@ def get_mel_filename(audio_filename):
     return '{}.{}.mel'.format(os.path.splitext(audio_filename)[0], MELS)
 
 
+def get_spect(audio_filename, _range):
+    # get the spect
+    # print('[+] getting audio patch')
+    # import time
+    # start = time.time()
+    patch = get_audio_patch(audio_filename, _range)
+    # after = time.time()
+    # print('[+] audio patch:', after - start)
+    # print('[+] get image with audio')
+    spect = get_image_with_audio(patch)
+    # print('[+] spectrum:', time.time() - after)
+    # print('[+] done')
+    return spect[:, :FRAMES]
+
+
 def get_mel_spect(audio_filename, _range, dtype=np.float32):
     mel_filename = get_mel_filename(audio_filename)
 
     if not os.path.isfile(mel_filename):
         # get the spect
-        print('[+] getting audio patch')
+        # print('[+] getting audio patch')
         patch = get_audio_patch(audio_filename, _range)
-        print('[+] get image with audio')
-        get_image_with_audio(audio_filename)
-        print('[+] done')
-        return patch
+        # print('[+] get image with audio')
+        spect = get_image_with_audio(patch)
+        # print('[+] done')
+        return spect
 
     with open(mel_filename, 'rb') as f:
         itemsize = np.dtype(dtype).itemsize
@@ -220,8 +236,8 @@ def get_range_with_offset_and_ranges(offset, ranges):
             continue
 
         nstart = start + offset
-        if end - nstart > MELS:
-            end = nstart + MELS
+        if end - nstart > FRAMES:
+            end = nstart + FRAMES
         return (nstart, end)
 
 
@@ -230,7 +246,7 @@ def get_loudness_range_with_offest(audio_filename, offset):
     return get_range_with_offset_and_ranges(offset, loudness_ranges)
 
 
-def get_offset_range_patch(audio_filename, offset, _range=None, mix_filename=None, mels=MELS, cols=MELS):
+def get_offset_range_patch(audio_filename, offset, _range=None, mix_filename=None, rows=ROWS, cols=FRAMES):
     path = 1
     if _range is None:
         _range = get_loudness_range_with_offest(audio_filename, offset)
@@ -253,9 +269,11 @@ def get_offset_range_patch(audio_filename, offset, _range=None, mix_filename=Non
     if not filename:
         filename = audio_filename
     # print(mel_filename, _range)
-    res = get_mel_spect(filename, _range)
+    # print(_range, path)
+    # res = get_mel_spect(filename, _range)
+    res = get_spect(filename, _range)
     # res = mel_spect.T[_range[0]:_range[1]].T
-    if res.shape == (mels, cols):
+    if res.shape == (rows, cols):
         return res
 
     # print('[+] extending patch!', res.shape, _range, audio_filename)
@@ -263,17 +281,17 @@ def get_offset_range_patch(audio_filename, offset, _range=None, mix_filename=Non
     if (end - start) < SAMPLE_MIN_LENGTH:
         raise RuntimeError("Too short", audio_filename, offset, _range, mix_filename, path)
 
-    patch = np.zeros((mels, cols))
+    patch = np.zeros((rows, cols))
     patch[0:res.shape[0], 0:res.shape[1]] = res
     return patch
 
 
 def get_audio_patch(filename, _range=None):
-    if not _range:
+    if _range is None:
         _range = get_non_silent_range(filename)
     
     CPRECISION = 0.01
-    toread = math.ceil(((MELS * HOP_LENGTH) / SAMPLE_RATE) / CPRECISION) * CPRECISION
+    toread = math.ceil(((FRAMES * HOP_LENGTH) / SAMPLE_RATE) / CPRECISION) * CPRECISION
     sample_loc = random.uniform(_range[0], _range[1] - toread)
     y, sr = librosa.load(filename,
                          sr=SAMPLE_RATE,
@@ -287,18 +305,22 @@ def get_audio_patch(filename, _range=None):
 
 
 def get_image_with_audio(y):
-    mel = librosa.feature.melspectrogram(y=y,
-                                         sr=SAMPLE_RATE,
-                                         n_mels=MELS,
-                                         n_fft=FFT,
-                                         power=POWER,
-                                         hop_length=HOP_LENGTH)
+    # mel = librosa.feature.melspectrogram(y=y,
+    #                                      sr=SAMPLE_RATE,
+    #                                      n_mels=MELS,
+    #                                      n_fft=FFT,
+    #                                      power=POWER,
+    #                                      hop_length=HOP_LENGTH)
+    S = librosa.stft(y, FFT, HOP_LENGTH)
+    # mag, phase = librosa.magphase(S)
+    # print(mag.min(), mag.max(), mag.mean())
+    win_len = FFT
+    # max_val = (win_len / 3.0)
+    max_val = (win_len / 3.0)
+    # return mag / max_val
+    power = librosa.power_to_db(S, ref=np.max)
+    return (power.clip(-80, 0) + 80) / 80
     
-    mel_db = librosa.power_to_db(mel, ref=np.max)
-    image = mel_db.T[0:MELS]
-    image = (image.clip(-80, 0) + 80) / 80
-    image.reshape((MELS, MELS))
-    return image
 
 
 def to_audiosegment(arr):
@@ -314,8 +336,8 @@ def to_audiosegment(arr):
 if __name__ == '__main__':
     import matplotlib.pyplot as plt
     import traceback
-    fig = plt.figure(figsize=(16,4))
-    a=fig.add_subplot(1,1,1)
+    fig = plt.figure(figsize=(16, 4))
+    a = fig.add_subplot(1, 1, 1)
     # ax = plt.Axes(fig, [0., 0., 1., 1.])
     # ax.set_axis_off()
     # fig.add_axes(ax)

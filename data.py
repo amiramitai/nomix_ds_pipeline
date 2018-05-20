@@ -719,7 +719,10 @@ class MultiDatasets:
                                 params, label = ret
                                 filename, offset, _range = params
                                 mix = ds.get_mixture_with_vocal(filename)
+                                # print('data:723:', mix)
                                 if mix:
+                                    if isinstance(mix, list):
+                                        mix = mix[0]
                                     # print('[+] hasmix!')
                                     ret = MixWithVocalResult(ret, mix)
                             # print('[+] yielding', label_name, ret)
