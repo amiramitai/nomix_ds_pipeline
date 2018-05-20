@@ -5,9 +5,9 @@ import librosa
 import pickle
 import numpy as np
 from scipy.ndimage.interpolation import shift
+import audio
 
 sys.path.insert(0,'..')
-import audio
 
 AUDIO_EXTS = [b'.wav', b'.mp3', b'.ogg', b'.aac', b'.wma']
 
@@ -37,12 +37,12 @@ def get_silence_mask(im, _max):
     ret = ((im / _max) < (thresh)).astype(np.float32)
     return smooth(ret, SMOOTHING_LEVEL)
 
+
 def get_ranges_from_mask(mask):
     coords = np.where((mask + shift(mask, 1)) == 1.0)[0].tolist()
     if mask[-1] == 1.0:
         coords.append(len(mask)-1)
     return coords
-
 
 
 def get_audio(filename):

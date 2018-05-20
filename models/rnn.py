@@ -215,26 +215,15 @@ def train(test_num, devices, tip, params=None, load_prev=True, should_save=True)
                     all_logits.append(net.logits)
     
     vars_ = tf.trainable_variables()    
-    # update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
-    # with tf.control_dependencies(update_ops):
-    # print('towers:', tower_grads)
-    # import pdb; pdb.set_trace()
     loss = tf.reduce_mean(all_loss)
     acc = tf.reduce_mean(all_acc)
-    # preds = tf.concat(all_preds, axis=0)
-    # logits = tf.concat(eval_logits, axis=0)
     grads_ = average_gradients(tower_grads)
     train_op = optimizer.apply_gradients(grads_, global_step=global_step)
 
     summary = []
     for i, (loss_, acc_, grad) in enumerate(zip(all_loss, all_acc, tower_grads)):
         with tf.name_scope('tower_%d' % i):
-            # summary.append(tf.summary.histogram('preds', preds_))
             summary.append(tf.summary.scalar('loss', loss_))
-            
-            # total_pixels = float(np.prod(split.get_shape()).value) / tf.shape(split)[0]
-            # accuracy = (1.0 - (loss_ / total_pixels)) * 100.0
-            # accuracy = tf.reduce_mean()
             summary.append(tf.summary.scalar('accuracy', acc_))
             grad_norm = tf.norm(grad[0][0])
             summary.append(tf.summary.scalar('gradient', grad_norm))
@@ -243,7 +232,6 @@ def train(test_num, devices, tip, params=None, load_prev=True, should_save=True)
         summary.append(tf.summary.scalar('loss', loss))
         grad_norm = tf.norm(grads_[0][0])
         summary.append(tf.summary.scalar('gradient', grad_norm))
-        # total_pixels = np.prod(gt.get_shape()).value / tf.shape(split)[0]
         accuracy = acc
         summary.append(tf.summary.scalar('accuracy', accuracy))
     summary = tf.summary.merge(summary)
