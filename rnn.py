@@ -11,6 +11,7 @@ import json
 import shutil
 import sys
 import traceback
+import numpy as np
 
 import warnings as w
 w.simplefilter(action='ignore', category=FutureWarning)
@@ -29,6 +30,7 @@ class RNNModel:
         return self.net()
 
     def _net(self):
+        import tensorflow as tf
         # RNN and dense layers
         cells = []
         for _ in range(self.params['rnn_layers']):

@@ -13,19 +13,20 @@ import numpy as np
 from exceptions import BadAudioFile
 
 
-FFT = 224 * 2
+# FFT = 224 * 2
+FFT = 2048
 ROWS = (FFT // 2) + 1
-HOP_LENGTH = int(FFT / 4)
+HOP_LENGTH = FFT // 4
 # MELS = 224
 MELS = 1024
 FRAMES = 224
 SAMPLE_RATE = 44100
 POWER = 2.0
-SPLIT_HOP_LENGTH = int(MELS / 8)  # Cols
+SPLIT_HOP_LENGTH = FFT // 4  # Cols
 SILENCE_HOP_THRESHOLD = 0.30  # 30%
 RMS_SILENCE_THRESHOLD = 0.75  # RMS
 SECONDS_TO_READ = 2.8
-SAMPLE_MIN_LENGTH = int(MELS * 0.6)
+SAMPLE_MIN_LENGTH = int(FFT * 0.6)
 
 
 def get_number_of_frames(filename):

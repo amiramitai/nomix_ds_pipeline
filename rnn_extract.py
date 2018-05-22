@@ -19,8 +19,8 @@ warnings.simplefilter(action='ignore', category=FutureWarning)
 
 logging.getLogger("tensorflow").setLevel(logging.WARNING)
 
-# filename = '/Users/amiramitai/Projects/nomix/02 Made In Heaven.mp3'
-filename = '/Users/amiramitai/Projects/nomix/Cool_Joke_-_Undo_OST_Fullmetal_Alchemist_OP_3_(DemoLat.com).mp3'
+filename = '/Users/amiramitai/Projects/nomix/02 Made In Heaven.mp3'
+# filename = '/Users/amiramitai/Projects/nomix/Cool_Joke_-_Undo_OST_Fullmetal_Alchemist_OP_3_(DemoLat.com).mp3'
 # weights = '/Users/amiramitai/Projects/nomix/rnn-2018-05-06_085120'
 # weights = '/Users/amiramitai/Projects/nomix/rnn-2018-05-06_104506'
 # weights = '/Users/amiramitai/Projects/nomix/rnn-2018-05-06_171143'
@@ -35,7 +35,8 @@ filename = '/Users/amiramitai/Projects/nomix/Cool_Joke_-_Undo_OST_Fullmetal_Alch
 # weights = '/Users/amiramitai/Projects/nomix/1-2018-05-18_185354'
 # weights = '/Users/amiramitai/Projects/nomix/1-2018-05-19_145340'
 # weights = '/Users/amiramitai/Projects/nomix/0-2018-05-19_171224'
-weights = '/Users/amiramitai/Projects/nomix/1-2018-05-19_210748'
+# weights = '/Users/amiramitai/Projects/nomix/1-2018-05-19_210748'
+weights = '/Users/amiramitai/Projects/nomix/0-2018-05-22_090306'
 
 
 try:
@@ -83,24 +84,27 @@ def split_spectrogram_into_snippets(spectrogram, length, zero_padding=False):
 win_length = audio.FFT
 print('[+] loading audio file:', filename)
 try:
-    mag, phase = pickle.load(open(filename + '.cache', 'rb'))
+    S = pickle.load(open(filename + '.cache', 'rb'))
 except:
     print('recaching..')
     y, sr = librosa.load(filename, sr=audio.SAMPLE_RATE)
     if y.ndim > 1:
         y = y[0]
-    S = librosa.stft(y, audio.FFT, hop_length=audio.HOP_LENGTH, win_length=win_length)
-    mag, phase = librosa.magphase(S)
-    pickle.dump((mag, phase), open(filename + '.cache', 'wb'))
+    S = librosa.stft(y, audio.FFT, audio.HOP_LENGTH)
+    # mag, phase = librosa.magphase(S)
+    pickle.dump(S, open(filename + '.cache', 'wb'))
 
 # mel spectrum
-mel_basis = librosa.filters.mel(audio.SAMPLE_RATE, audio.FFT, n_mels=audio.MELS)
-mel = np.dot(mel_basis, mag)
+# mel_basis = librosa.filters.mel(audio.SAMPLE_RATE, audio.FFT, n_mels=audio.MELS)
+# mel = np.dot(mel_basis, mag)
 # print(mel.shape, mag.shape)
 
-mel_graph = librosa.power_to_db(mel ** 2.0, ref=np.max)
-mel_graph = (mel_graph.clip(-80, 0) + 80) / 80.0
+# mel_graph = librosa.power_to_db(mel ** 2.0, ref=np.max)
+# mel_graph = (mel_graph.clip(-80, 0) + 80) / 80.0
 # print('mel_graph.shape:', mel_graph.shape)
+mag, phase = librosa.magphase(S)
+power = librosa.power_to_db(S, ref=np.max)
+spect = (power.clip(-80, 0) + 80) / 80
 
 # plt.imshow(feature, cmap='Greys_r')
 # plt.show()
@@ -118,8 +122,8 @@ num_classes = 2
 weights_name = '.' + weights.split('_')[-1]
 l0_out_filename = '{}.l0.{}.mask'.format(filename, weights_name)
 l1_out_filename = '{}.l1.{}.mask'.format(filename, weights_name)
-logits0_snips = np.zeros(mel_graph.shape)
-logits1_snips = np.zeros(mel_graph.shape)
+logits0_snips = np.zeros(spect.shape)
+logits1_snips = np.zeros(spect.shape)
 extract_mask = True
 try:
     logits0_snips = pickle.load(open(l0_out_filename, 'rb'))
@@ -136,17 +140,14 @@ if extract_mask:
     with tf.name_scope('tower_0') as scope:
         pass
 
-    x_mixed = tf.placeholder(tf.float32, shape=(None, None, audio.MELS), name='x_mixed')
-    y_src1 = tf.placeholder(tf.float32, shape=(None, None, audio.MELS), name='y_src1')
-    y_src2 = tf.placeholder(tf.float32, shape=(None, None, audio.MELS), name='y_src2')
+    x_mixed = tf.placeholder(tf.float32, shape=(None, None, audio.ROWS), name='x_mixed')
+    y_src1 = tf.placeholder(tf.float32, shape=(None, None, audio.ROWS), name='y_src1')
+    y_src2 = tf.placeholder(tf.float32, shape=(None, None, audio.ROWS), name='y_src2')
     global_step = tf.Variable(0, trainable=False)
-    net = RNNModel(x_mixed, y_src1, y_src2,
-                hidden_size=params['hidden_size'],
-                seq_len=SEQ_LEN, training=False)
-
+    net = RNNModel(x_mixed, y_src1, y_src2, params)
 
     init_op = tf.group(tf.global_variables_initializer(),
-                    tf.local_variables_initializer())
+                       tf.local_variables_initializer())
     config = tf.ConfigProto(log_device_placement=True)
     # config = tf.ConfigProto(device_count={'GPU': 0})
     config.gpu_options.allow_growth = True
@@ -199,7 +200,7 @@ if extract_mask:
     preds_snips = []
     # logits0_snips = []
     # logits1_snips = []
-    to_run = [net.logits]
+    to_run = [net.prediction]
 
     cmap = 'hot'
     # cmap = 'Greys_r'
@@ -244,21 +245,20 @@ if extract_mask:
         return mask
 
     skip = 224 // 4
-    to_process = 224 * 4
-    steps = mel_graph.shape[1] - to_process
+    to_process = audio.FRAMES * 4
+    steps = spect.shape[1] - to_process
     half_seq_phase = SEQ_LEN // 2
     print('seq_len:', half_seq_phase)
     while True:
         if i >= steps:
             break
         print(i, steps, str(datetime.datetime.now() - start))
-        s = mel_graph[:, i:i+to_process]
+        s = spect[:, i:i+to_process]
         
-        
-        batch = spec_to_batch(s.reshape((1, 224, to_process)))
+        batch = spec_to_batch(s.reshape((1, audio.ROWS, to_process)))
         _t = sess.run(to_run, feed_dict={x_mixed: batch})
-        y1 = batch_to_spec(_t[0][0], 1)[:, :, :to_process].reshape((224, to_process))
-        y2 = batch_to_spec(_t[0][1], 1)[:, :, :to_process].reshape((224, to_process))
+        y1 = batch_to_spec(_t[0][0], 1)[:, :, :to_process].reshape((audio.ROWS, to_process))
+        y2 = batch_to_spec(_t[0][1], 1)[:, :, :to_process].reshape((audio.ROWS, to_process))
 
         # mask_src1 = soft_time_freq_mask(y1, y2)
         # mask_src2 = 1. - y1
@@ -270,11 +270,11 @@ if extract_mask:
         logits0_snips[:, i:i+to_process] = mask_src1
         logits1_snips[:, i:i+to_process] = mask_src2
 
-        s2 = mel_graph[:, i+half_seq_phase:i+to_process+half_seq_phase]
-        batch = spec_to_batch(s2.reshape((1, 224, to_process)))
+        s2 = spect[:, i+half_seq_phase:i+to_process+half_seq_phase]
+        batch = spec_to_batch(s2.reshape((1, audio.ROWS, to_process)))
         _t = sess.run(to_run, feed_dict={x_mixed: batch})
-        y1 = batch_to_spec(_t[0][0], 1)[:, :, :to_process].reshape((224, to_process))
-        y2 = batch_to_spec(_t[0][1], 1)[:, :, :to_process].reshape((224, to_process))
+        y1 = batch_to_spec(_t[0][0], 1)[:, :, :to_process].reshape((audio.ROWS, to_process))
+        y2 = batch_to_spec(_t[0][1], 1)[:, :, :to_process].reshape((audio.ROWS, to_process))
 
         for ib in range(y2.shape[1]):
             if abs(ib % -SEQ_LEN) < 2 or abs(ib % SEQ_LEN) < 2:
@@ -290,7 +290,7 @@ if extract_mask:
         if '-v' in sys.argv:
             plt.figure(1)
             plt.subplot(2, 3, 1)
-            plt.imshow(s.reshape((224, to_process)), cmap=cmap, vmin=0.0, vmax=1.0)
+            plt.imshow(s.reshape((audio.ROWS, to_process)), cmap=cmap, vmin=0.0, vmax=1.0)
             plt.subplot(2, 3, 2)
             plt.imshow(y1, cmap=cmap, vmin=0.0, vmax=1.0)
             plt.subplot(2, 3, 3)
@@ -382,12 +382,12 @@ for l, name in [(logits1_snips, '.l1')]:
     # for _ in range(20):
     #     print(_)
         # out = mix(gaussian_filter1d(out, 10, axis=1), l, 0.5)
-    out[out < 0.55] = 0
-    out = normalize(l + (gaussian_filter1d(out, 20, axis=1) - out))
+    # out[out < 0.55] = 0
+    # out = normalize(l + (gaussian_filter1d(out, 20, axis=1) - out))
     # out = normalize(gaussian_filter1d(out, 20, axis=1))
     # out = normalize(gaussian_filter1d(out, 5, axis=0))
-    nl = l.copy()
-    nl[nl < 0.35] = 0
+    # nl = l.copy()
+    # nl[nl < 0.35] = 0
     # out = mix(out, normalize(nl), 0.5)
     plt.imshow(out, cmap='hot', aspect=20, vmin=0.0, vmax=1.0)
     plt.savefig(name, dpi=300, orientation='landscape', bbox_inches='tight')
@@ -395,10 +395,11 @@ for l, name in [(logits1_snips, '.l1')]:
     l = out
 
     vocs = l
-    voc_reg = np.dot(np.transpose(mel_basis), vocs)
+    # voc_reg = np.dot(np.transpose(mel_basis), vocs)
+    voc_reg = vocs
     FACTOR = 3
-    # voc_reg[voc_reg < 0.3] *= 0.1
-    voc_reg = normalize(voc_reg)
+    voc_reg[voc_reg < 0.35] *= 0.01
+    # voc_reg = normalize(voc_reg)
     # voc_reg[voc_reg < 0.5] *= 0.5
     # voc_reg[voc_reg < 0.5] *= 0.5
     # voc_reg[voc_reg < 0.3] *= 0.5
@@ -413,12 +414,12 @@ for l, name in [(logits1_snips, '.l1')]:
     # voc_reg = normalize((voc_reg * FACTOR) ** FACTOR)
     # voc_reg[voc_reg < 0.05] = 0
     # masked = mag.T[:voc_reg.shape[1]].T * gaussian_filter(voc_reg, sigma=1)
-    masked = mag.T[:voc_reg.shape[1]].T * voc_reg
+    masked = mag.T[:voc_reg.shape[1]].T * normalize(voc_reg)
 
     # masked[masked < 0.2] *= masked[masked < 0.2]
     # masked[masked < 0.1] = 0.0
     S2 = masked * np.exp(1.j * phase.T[:voc_reg.shape[1]].T)
-    y2 = librosa.istft(S2, hop_length=audio.HOP_LENGTH, win_length=win_length)
+    y2 = librosa.istft(S2, audio.HOP_LENGTH)
     librosa.output.write_wav(out_filename + '.masked.vocl.wav', y2, audio.SAMPLE_RATE, norm=False)
     print('      ' + out_filename + '.masked.vocl.wav')
     # print('  [+] regular')
