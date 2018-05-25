@@ -14,7 +14,7 @@ from utils import iterate_files, iterate_audio_files
 
 from audio import get_net_duration, get_number_of_frames, get_offset_range_patch
 from audio import get_spect_range_from_time_range, choose_spect_range
-from audio import MELS, HOP_LENGTH, SAMPLE_RATE, RMS_SILENCE_THRESHOLD, SILENCE_HOP_THRESHOLD
+from audio import HOP_LENGTH, SAMPLE_RATE, RMS_SILENCE_THRESHOLD, SILENCE_HOP_THRESHOLD
 from audio import SAMPLE_MIN_LENGTH
 
 from collections import defaultdict
@@ -125,7 +125,6 @@ class MixWithVocalResult(DatasetResult):
 
     def desc(self):
         return 'voc:' + str(self.voc[0][0]) + '+ mix:' + self.mix
-        
 
     def get_label(self):
         return self.voc[1]
