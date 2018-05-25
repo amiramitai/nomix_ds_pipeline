@@ -42,7 +42,7 @@ def send_mail(subject, body):
 
 
 def iterate_audio_files(path):
-    return iterate_files(path, ('.wav', '.aac', '.wav', '.ogg', '.wma', '.m4a'))
+    return iterate_files(path, ('.mp3', '.wav', '.aac', '.wav', '.ogg', '.wma', '.m4a'))
 
 
 def iterate_files(path, ext=''):

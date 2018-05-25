@@ -328,26 +328,26 @@ def train(test_num, devices, tip, params=None):
         descriptions, features, labels1, labels2 = get_data_from_tip(tip, batch_size)
         # print('data: f min {} max {}, l1 min {} max {}, l2 min {} max {}'.format(features.min(), features.max(), labels1.min(), labels1.max(), labels2.min(), labels2.max()))
 
-        try:
-            with np.errstate(all='raise'):
-                for i in range(5):
-                    newfeatures = seq.augment_images(features * 255) / 255
-                    if not np.isnan(newfeatures).any():
-                        break
-                    print('[!] has nan in newfeatures, retrying', i)
-                if np.isnan(newfeatures).any():
-                    print('[!] could not get rid of nan.. skipping this batch')
-                    iteration -= 1
-                    continue
-                features = newfeatures
-        except Exception:
-            print("[!] Warning detected augmenting, skipping..")
-            tb = traceback.format_exc()
-            print(tb)
-            open("numpy_warns.log", 'ab').write(str(descriptions).encode('utf-8'))
-            open("numpy_warns.log", 'ab').write(str(tb).encode('utf-8'))
-            open("numpy_warns.log", 'a').write('------------------------------------')
-            continue
+        # try:
+        #     with np.errstate(all='raise'):
+        #         for i in range(5):
+        #             newfeatures = seq.augment_images(features * 255) / 255
+        #             if not np.isnan(newfeatures).any():
+        #                 break
+        #             print('[!] has nan in newfeatures, retrying', i)
+        #         if np.isnan(newfeatures).any():
+        #             print('[!] could not get rid of nan.. skipping this batch')
+        #             iteration -= 1
+        #             continue
+        #         features = newfeatures
+        # except Exception:
+        #     print("[!] Warning detected augmenting, skipping..")
+        #     tb = traceback.format_exc()
+        #     print(tb)
+        #     open("numpy_warns.log", 'ab').write(str(descriptions).encode('utf-8'))
+        #     open("numpy_warns.log", 'ab').write(str(tb).encode('utf-8'))
+        #     open("numpy_warns.log", 'a').write('------------------------------------')
+        #     continue
 
         features = features.reshape((batch_size, audio.ROWS, audio.FRAMES))
         labels1 = labels1.reshape((batch_size, audio.ROWS, audio.FRAMES))
@@ -535,7 +535,7 @@ if __name__ == "__main__":
         max_iteration=10000000,
         hidden_size=256,
         rnn_layers=3,
-        batch_size=20,
+        batch_size=512,
         learning_rate=1e-3,
         seq_len=4,
         load_prev=True,

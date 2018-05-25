@@ -5,6 +5,7 @@ import os
 import pickle
 import datetime
 import json
+import sys
 
 import audioread
 import librosa
@@ -13,26 +14,24 @@ import numpy as np
 from exceptions import BadAudioFile
 
 
-# FFT = 224 * 2
 FFT = 2048
 ROWS = (FFT // 2) + 1
 HOP_LENGTH = FFT // 4
 # MELS = 224
-MELS = 1024
+# MELS = 1024
 FRAMES = 224
 SAMPLE_RATE = 44100
 POWER = 2.0
-SPLIT_HOP_LENGTH = FFT // 4  # Cols
 SILENCE_HOP_THRESHOLD = 0.30  # 30%
 RMS_SILENCE_THRESHOLD = 0.75  # RMS
 SECONDS_TO_READ = 2.8
-SAMPLE_MIN_LENGTH = int(FFT * 0.6)
+SAMPLE_MIN_LENGTH = 60
 
 
 def get_number_of_frames(filename):
     try:
         n = 0
-        loudness_ranges = get_loudness_ranges(filename)
+        loudness_rangets = get_loudness_ranges(filename)
         for start, end in loudness_ranges:
             if (end - start) < SAMPLE_MIN_LENGTH:
                 continue
@@ -152,7 +151,7 @@ def get_loudness_ranges(audio_filename):
     jfilename = os.path.splitext(audio_filename)[0] + '.json'
     j = json.load(open(jfilename))
     if 'loudness_ranges' not in j:
-        print(audio_filename, jfilename)
+        print('[+] loudness_ranges was not found in', audio_filename, jfilename)
     return j['loudness_ranges']
 
 
@@ -160,7 +159,7 @@ def get_rand_loudness_range(audio_filename):
     jfilename = os.path.splitext(audio_filename)[0] + '.json'
     j = json.load(open(jfilename))
     if 'loudness_ranges' not in j:
-        print(audio_filename, jfilename)
+        print('[+] loudness_ranges was not found in', audio_filename, jfilename)
     loudness_ranges = j['loudness_ranges'][:]
 
     if not loudness_ranges:
@@ -180,18 +179,43 @@ def get_mel_filename(audio_filename):
     return '{}.{}.mel'.format(os.path.splitext(audio_filename)[0], MELS)
 
 
+def audio_path_to_cache_path(path):
+    if sys.platform == 'darwin':
+        return os.path.join('/Users/amiramitai/cache', '{}.{}.fft'.format(os.path.basename(path), FFT))
+
+    t = 'T{}.{}.fft'.format(path[1:], FFT)
+    if os.path.isfile(t):
+        return t
+    v = 'V{}.{}.fft'.format(path[1:], FFT)
+    if os.path.isfile(v):
+        return v
+    s = 'S{}.{}.fft'.format(path[1:], FFT)
+    return s
+
+
+def get_spect_from_cache(spect_filename, _range, dtype=np.float32):
+    with open(spect_filename, 'rb') as f:
+        itemsize = np.dtype(dtype).itemsize
+        start, end = _range
+        f.seek(ROWS * start * itemsize)
+        spect = np.frombuffer(f.read((end - start) * ROWS * itemsize), dtype=dtype)
+        spect = spect.reshape((-1, ROWS)).T
+        return spect
+
+
 def get_spect(audio_filename, _range):
     # get the spect
     # print('[+] getting audio patch')
     # import time
     # start = time.time()
+    cache_path = audio_path_to_cache_path(audio_filename)
+    if cache_path and os.path.isfile(cache_path):
+        return get_spect_from_cache(cache_path, _range)
+    
+    # raise RuntimeError('now we are running on cache only', cache_path, audio_filename, _range)
+    
     patch = get_audio_patch(audio_filename, _range)
-    # after = time.time()
-    # print('[+] audio patch:', after - start)
-    # print('[+] get image with audio')
     spect = get_image_with_audio(patch)
-    # print('[+] spectrum:', time.time() - after)
-    # print('[+] done')
     return spect[:, :FRAMES]
 
 
@@ -244,7 +268,9 @@ def get_range_with_offset_and_ranges(offset, ranges):
 
 def get_loudness_range_with_offest(audio_filename, offset):
     loudness_ranges = get_loudness_ranges(audio_filename)
-    return get_range_with_offset_and_ranges(offset, loudness_ranges)
+    ret = get_range_with_offset_and_ranges(offset, loudness_ranges)
+    # print('get_loudness_rwo: {} offset: {} lranges: {} range: {}'.format(audio_filename, offset, loudness_ranges, ret))
+    return ret
 
 
 def get_offset_range_patch(audio_filename, offset, _range=None, mix_filename=None, rows=ROWS, cols=FRAMES):
@@ -272,6 +298,7 @@ def get_offset_range_patch(audio_filename, offset, _range=None, mix_filename=Non
     # print(mel_filename, _range)
     # print(_range, path)
     # res = get_mel_spect(filename, _range)
+
     res = get_spect(filename, _range)
     # res = mel_spect.T[_range[0]:_range[1]].T
     if res.shape == (rows, cols):
@@ -319,15 +346,19 @@ def get_image_with_audio(y):
     # max_val = (win_len / 3.0)
     max_val = (win_len / 3.0)
     # return mag / max_val
-    power = librosa.power_to_db(S, ref=np.max)
+    power = librosa.power_to_db(S ** 2, ref=np.max)
     return (power.clip(-80, 0) + 80) / 80
-    
+
+
+def spectrum_to_mel_spectrum(S, n_mels):
+    mel_basis = librosa.filters.mel(SAMPLE_RATE, FFT, n_mels=n_mels)
+    return np.dot(S.T, mel_basis.T).T
 
 
 def to_audiosegment(arr):
     if arr.dtype in [np.float16, np.float32, np.float64]:
         arr = np.int16(arr/np.max(np.abs(arr)) * 32767)
-    
+
     return AudioSegment(arr.tobytes(),
                         frame_rate=SAMPLE_RATE,
                         sample_width=2,
